@@ -1,0 +1,62 @@
+PASS [1] Vào trang vé máy bay qua URL #/flight -- PageHero vé máy bay hiển thị, hash #/flight đúng
+PASS [2] Chọn một chuyến bay (nút Chọn vé) -- Đã chọn: Vietnam Airlines -> trang checkout
+PASS [3] Nhập đầy đủ thông tin hành khách -- Tên / SĐT / Email đã nhập
+PASS [4] Kiểm tra trang checkout đầy đủ khối thông tin -- Tổng tiền hiển thị: 2.580.000 ₫
+PASS [5] Chưa đăng nhập bấm thanh toán -> login gate xuất hiện -- Login modal hiển thị ("Bạn cần đăng nhập để hoàn tất đặt chỗ.")
+PASS [6] Validation login rồi đăng nhập thành công -- 2 lỗi validation hiển thị đúng, đăng nhập demo1 thành công
+PASS [7] Chọn phương thức thanh toán (Ví điện tử) -- Ví điện tử selected + hiển thị trong tóm tắt
+PASS [8] Bấm thanh toán -> xử lý -> chuyển trang đặt chỗ -- Chuyển sang trang Đặt chỗ của tôi; toast: "Đặt chỗ thành công! Mã đơn: MAN9377673"
+PASS [9] Xác nhận booking vừa tạo (mã MAN, trạng thái, phương thức) -- Đơn MAN9377673 — E2E, Ví điện tử, Đã xác nhận
+PASS [10] Mục Đặt chỗ của tôi hiển thị booking -- Hiển thị 1 đơn
+PASS [11] F5/reload — booking vẫn còn (persistence) -- Vẫn còn 1 đơn sau reload
+PASS [12] Logout — không còn thấy booking của tài khoản trước -- Đăng xuất -> danh sách rỗng (đơn của demo1 bị ẩn)
+PASS [13] Tài khoản demo2 không thấy booking của demo1 -- demo2 thấy danh sách rỗng — không rò rỉ
+PASS [T1] Validation SĐT sai + Email sai khi thanh toán -- SĐT sai + Email sai đều bị chặn đúng
+PASS [T2] Double-click thanh toán chỉ tạo 1 đơn -- Tạo đúng 1 đơn (trước 0 -> sau 1)
+PASS [T3] Nút Quay lại trang chủ từ checkout (cancel) -- Hủy checkout -> về trang chủ OK
+PASS [T4] Back trình duyệt quay lại trang trước -- goBack về trang chủ OK
+PASS [T5] Validation tìm kiếm: trống & ngày về < ngày đi -- Trống + ngày về trước ngày đi đều bị chặn
+PASS [T6-home] Refresh route #/home giữ đúng trang -- #home sống sót sau reload
+PASS [T6-flight] Refresh route #/flight giữ đúng trang -- #flight sống sót sau reload
+PASS [T6-hotel] Refresh route #/hotel giữ đúng trang -- #hotel sống sót sau reload
+PASS [T6-combo] Refresh route #/combo giữ đúng trang -- #combo sống sót sau reload
+PASS [T6-bookings] Refresh route #/bookings giữ đúng trang -- #bookings sống sót sau reload
+PASS [T7] Route lạ #/khong-ton-tai -> trang 404 -- 404 hiển thị + nút về trang chủ hoạt động
+PASS [T8] Refresh tại checkout khi chưa chọn gì -> guard -- Không crash, hiện hướng dẫn chọn dịch vụ
+PASS [T9-375] Mobile 375px: bottom nav + không tràn ngang -- Không tràn ngang, bottom nav 5 mục
+PASS [T9-390] Mobile 390px: bottom nav + không tràn ngang -- Không tràn ngang, bottom nav 5 mục
+PASS [T9-430] Mobile 430px: bottom nav + không tràn ngang -- Không tràn ngang, bottom nav 5 mục
+PASS [T10] Không có runtime/pageerror trong toàn bộ phiên test -- 0 lỗi runtime
+
+========== KET QUA E2E ==========
+PASS | 1 | Vào trang vé máy bay qua URL #/flight -- PageHero vé máy bay hiển thị, hash #/flight đúng
+PASS | 2 | Chọn một chuyến bay (nút Chọn vé) -- Đã chọn: Vietnam Airlines -> trang checkout
+PASS | 3 | Nhập đầy đủ thông tin hành khách -- Tên / SĐT / Email đã nhập
+PASS | 4 | Kiểm tra trang checkout đầy đủ khối thông tin -- Tổng tiền hiển thị: 2.580.000 ₫
+PASS | 5 | Chưa đăng nhập bấm thanh toán -> login gate xuất hiện -- Login modal hiển thị ("Bạn cần đăng nhập để hoàn tất đặt chỗ.")
+PASS | 6 | Validation login rồi đăng nhập thành công -- 2 lỗi validation hiển thị đúng, đăng nhập demo1 thành công
+PASS | 7 | Chọn phương thức thanh toán (Ví điện tử) -- Ví điện tử selected + hiển thị trong tóm tắt
+PASS | 8 | Bấm thanh toán -> xử lý -> chuyển trang đặt chỗ -- Chuyển sang trang Đặt chỗ của tôi; toast: "Đặt chỗ thành công! Mã đơn: MAN9377673"
+PASS | 9 | Xác nhận booking vừa tạo (mã MAN, trạng thái, phương thức) -- Đơn MAN9377673 — E2E, Ví điện tử, Đã xác nhận
+PASS | 10 | Mục Đặt chỗ của tôi hiển thị booking -- Hiển thị 1 đơn
+PASS | 11 | F5/reload — booking vẫn còn (persistence) -- Vẫn còn 1 đơn sau reload
+PASS | 12 | Logout — không còn thấy booking của tài khoản trước -- Đăng xuất -> danh sách rỗng (đơn của demo1 bị ẩn)
+PASS | 13 | Tài khoản demo2 không thấy booking của demo1 -- demo2 thấy danh sách rỗng — không rò rỉ
+PASS | T1 | Validation SĐT sai + Email sai khi thanh toán -- SĐT sai + Email sai đều bị chặn đúng
+PASS | T2 | Double-click thanh toán chỉ tạo 1 đơn -- Tạo đúng 1 đơn (trước 0 -> sau 1)
+PASS | T3 | Nút Quay lại trang chủ từ checkout (cancel) -- Hủy checkout -> về trang chủ OK
+PASS | T4 | Back trình duyệt quay lại trang trước -- goBack về trang chủ OK
+PASS | T5 | Validation tìm kiếm: trống & ngày về < ngày đi -- Trống + ngày về trước ngày đi đều bị chặn
+PASS | T6-home | Refresh route #/home giữ đúng trang -- #home sống sót sau reload
+PASS | T6-flight | Refresh route #/flight giữ đúng trang -- #flight sống sót sau reload
+PASS | T6-hotel | Refresh route #/hotel giữ đúng trang -- #hotel sống sót sau reload
+PASS | T6-combo | Refresh route #/combo giữ đúng trang -- #combo sống sót sau reload
+PASS | T6-bookings | Refresh route #/bookings giữ đúng trang -- #bookings sống sót sau reload
+PASS | T7 | Route lạ #/khong-ton-tai -> trang 404 -- 404 hiển thị + nút về trang chủ hoạt động
+PASS | T8 | Refresh tại checkout khi chưa chọn gì -> guard -- Không crash, hiện hướng dẫn chọn dịch vụ
+PASS | T9-375 | Mobile 375px: bottom nav + không tràn ngang -- Không tràn ngang, bottom nav 5 mục
+PASS | T9-390 | Mobile 390px: bottom nav + không tràn ngang -- Không tràn ngang, bottom nav 5 mục
+PASS | T9-430 | Mobile 430px: bottom nav + không tràn ngang -- Không tràn ngang, bottom nav 5 mục
+PASS | T10 | Không có runtime/pageerror trong toàn bộ phiên test -- 0 lỗi runtime
+
+TONG: 29 | PASS: 29 | FAIL: 0

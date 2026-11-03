@@ -1,0 +1,34 @@
+=== QA ADMIN / SECURITY — Mây An Nhiên ===
+PASS [1] Chưa đăng nhập gọi /api/admin/* -> 401 + JSON error -- 5 endpoint đều 401
+PASS [2] User thường gọi API admin (GET/POST/PATCH) -> 403 -- GET/POST/PATCH đều 403
+PASS [3] Request mutating thiếu header X-Requested-With -> 403 (chống CSRF) -- kể cả admin cũng bị chặn khi thiếu header
+PASS [4] Sai mật khẩu 5 lần -> bị khoá 429 ở lần thứ 6 -- 5 lần 401 -> lần 6 bị 429
+PASS [5] API không trả password_hash/plaintext mật khẩu -- 0 dấu vết hash/plaintext trong API
+PASS [6] User B không thấy/không hủy được đơn của user A (404) -- B:0 đơn +404 khi hủy; A tự hủy OK; tổng tiền server=1628000
+PASS [7] Vô hiệu hóa tài khoản -> phiên cũ của user bị chặn (403) ngay -- 403 ngay khi bị admin tắt, không cần chờ hết hạn phiên
+PASS [8] Không thể đổi role qua API (kể cả khi là admin) + register luôn là user -- register bị ép role=user; PATCH role -> 400
+PASS [9] Đổi role trong localStorage không mở được /admin (server vẫn chặn) -- 403 khi gọi API + chỉ thấy form đăng nhập
+PASS [10] Đăng nhập admin thật -> dashboard có thống kê + ghi chú thanh toán mô phỏng -- 4 thẻ thống kê; 7 mục điều hướng
+PASS [11] Tạo/ngừng bán khách sạn qua UI -> catalog người dùng cập nhật ngay -- validate 400 + tạo 201 + ngừng bán ẩn catalog + soft-delete (8 bản ghi QA)
+PASS [12] Admin tìm/sửa trạng thái đơn; chuyển trạng thái sai -> 409 -- tìm kiếm OK; chuyển trạng thái hợp lệ=bỏ qua (không có đơn phù hợp); nhảy sai -> 409
+PASS [13] Trang người dùng không có menu/điều hướng quản trị -- header 5 mục + bottom 5 mục, không có mục quản trị
+PASS [14] Tài khoản thường đăng nhập ở /admin -> "không có quyền quản trị viên" -- bị từ chối + không thấy dashboard
+PASS [15] 0 console error + 0 pageerror trong toàn bộ suite; lưu ảnh chứng cứ -- console=0, pageerror=0, ảnh qa-evidence/admin-dashboard.png
+
+=== KẾT QUẢ QA ADMIN ===
+PASS [1] Chưa đăng nhập gọi /api/admin/* -> 401 + JSON error -- 5 endpoint đều 401
+PASS [2] User thường gọi API admin (GET/POST/PATCH) -> 403 -- GET/POST/PATCH đều 403
+PASS [3] Request mutating thiếu header X-Requested-With -> 403 (chống CSRF) -- kể cả admin cũng bị chặn khi thiếu header
+PASS [4] Sai mật khẩu 5 lần -> bị khoá 429 ở lần thứ 6 -- 5 lần 401 -> lần 6 bị 429
+PASS [5] API không trả password_hash/plaintext mật khẩu -- 0 dấu vết hash/plaintext trong API
+PASS [6] User B không thấy/không hủy được đơn của user A (404) -- B:0 đơn +404 khi hủy; A tự hủy OK; tổng tiền server=1628000
+PASS [7] Vô hiệu hóa tài khoản -> phiên cũ của user bị chặn (403) ngay -- 403 ngay khi bị admin tắt, không cần chờ hết hạn phiên
+PASS [8] Không thể đổi role qua API (kể cả khi là admin) + register luôn là user -- register bị ép role=user; PATCH role -> 400
+PASS [9] Đổi role trong localStorage không mở được /admin (server vẫn chặn) -- 403 khi gọi API + chỉ thấy form đăng nhập
+PASS [10] Đăng nhập admin thật -> dashboard có thống kê + ghi chú thanh toán mô phỏng -- 4 thẻ thống kê; 7 mục điều hướng
+PASS [11] Tạo/ngừng bán khách sạn qua UI -> catalog người dùng cập nhật ngay -- validate 400 + tạo 201 + ngừng bán ẩn catalog + soft-delete (8 bản ghi QA)
+PASS [12] Admin tìm/sửa trạng thái đơn; chuyển trạng thái sai -> 409 -- tìm kiếm OK; chuyển trạng thái hợp lệ=bỏ qua (không có đơn phù hợp); nhảy sai -> 409
+PASS [13] Trang người dùng không có menu/điều hướng quản trị -- header 5 mục + bottom 5 mục, không có mục quản trị
+PASS [14] Tài khoản thường đăng nhập ở /admin -> "không có quyền quản trị viên" -- bị từ chối + không thấy dashboard
+PASS [15] 0 console error + 0 pageerror trong toàn bộ suite; lưu ảnh chứng cứ -- console=0, pageerror=0, ảnh qa-evidence/admin-dashboard.png
+Tổng: 15 | PASS: 15 | FAIL: 0

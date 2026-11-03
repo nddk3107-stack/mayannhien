@@ -1,0 +1,21 @@
+=== QA HOTEL — Mây An Nhiên (browser thật) ===
+PASS [1] Trang hotel load thành công + runtime 0 lỗi -- hero OK; 3 card; title="Khách sạn - Mây An Nhiên"; ảnh 01-load.png
+PASS [2] Search keyword hợp lệ từ home -> trang hotel lọc đúng -- 1 kết quả Marina Bay; summary OK; ảnh 02-search.png
+PASS [3] Search keyword không tồn tại -> trạng thái rỗng có hướng dẫn -- empty state + hướng dẫn; 0 card; ảnh 03-empty.png
+PASS [4] Filter: khuyến mãi / miễn phí hủy / đánh giá / trung tâm / giá -- promo 3->2; hủy 1; rating 3; trung tâm 2; giá 1; khôi phục 3; ảnh 04-filters.png
+PASS [5] Chọn khách sạn -> danh sách phòng -> chọn phòng -> thanh toán phòng -- 3 phòng + tiện nghi; Marina Bay + Phòng Deluxe; nhãn nhận/trả đúng; ảnh 05-checkout.png
+PASS [6] Voucher nhập tay: hợp lệ (Enter) / sai loại / mã sai; tiền phòng đúng -- 5.550.000 - 666.000 = 4.884.000 (SALECUOITUAN); BAYNGAY + mã sai bị backend chặn; ảnh 06-voucher.png
+PASS [7] Ngày nhận/trả: đúng format + chặn ngày sai (inline) + khôi phục -- nhận 2026-10-26 -> trả 2026-10-29; lỗi inline ngày quá khứ/về<nhận + khôi phục OK; toast search đúng
+PASS [8] Login gate: pay khi chưa đăng nhập -> modal, validation login, không plaintext -- gate chặn + 3 lỗi validation + login hotela OK, 0 plaintext; ảnh 07-logingate.png
+PASS [9] Form khách: rỗng / tên ngắn / SĐT sai / email sai hiện lỗi cạnh ô -- rỗng/tên ngắn/SĐT/email đều hiện lỗi cạnh ô; maxlength=60; giữ dữ liệu; ảnh 08-form.png
+PASS [10] Chọn 3 phương thức thanh toán — summary phản ánh đúng -- ATM / Ví điện tử / Thẻ quốc tế đổi đúng trong summary
+PASS [11] Payment thành công -> booking hotel (phòng + voucher) hiện ở Đặt chỗ của tôi -- booking MAN814; tổng 4.884.000; phòng Deluxe 3 đêm; Thẻ quốc tế; ảnh 09-booking.png
+PASS [12] Reload trang bookings -> đơn vẫn tồn tại (lưu localStorage) -- reload -> còn nguyên 1 booking + session hotela vẫn có
+PASS [13] Isolation: logout -> trống; tài khoản B không thấy đơn A; login lại A -> còn -- khách=0; hotelb=0; hotela=1; ảnh 10-isolation.png
+PASS [14] Double-click thanh toán -> chỉ tạo thêm đúng 1 đơn (không trùng) -- bấm đôi -> đúng 2 đơn (không nhân đôi); ảnh 11-double.png
+PASS [15] Back-btn từ thanh toán phòng -> trang chọn phòng; back/forward không crash -- back-btn -> #/rooms; goBack/goForward không crash, URL sạch
+PASS [16] Mobile 375/390/430: không tràn ngang, navbar + bottom-nav + card hiển thị -- 375/390/430: 0 tràn, card+pay+bottom-nav OK; ảnh 12-mobile375.png
+PASS [17] API: skeleton loading, lỗi API -> banner + không crash, retry -> khôi phục -- skeleton=có; fallback 3 card; banner+strip+retry OK; ảnh 13-api.png
+PASS [18] Runtime: 0 console.error (ngoại trừ API chủ động) + 0 pageerror -- console.error=0; pageerror=0; không có plaintext password
+
+TONG: 18 | PASS: 18 | FAIL: 0

@@ -1,0 +1,146 @@
+{
+  "module": "FINAL",
+  "total": 23,
+  "passed": 23,
+  "failed": 0,
+  "results": [
+    {
+      "id": "1",
+      "title": "HOME: load thành công — hero + sections + title",
+      "status": "PASS",
+      "detail": "hero+3 badges; search/dock/trust/footer OK; title=\"Mây An Nhiên - Đặt dịch vụ du lịch\"; ảnh 01-home.png"
+    },
+    {
+      "id": "2",
+      "title": "HOME: search hoạt động — submit -> trang kết quả có tóm tắt",
+      "status": "PASS",
+      "detail": "submit -> #/flight + summary có keyword"
+    },
+    {
+      "id": "3",
+      "title": "HOME: preview chuyến bay + khách sạn hiển thị, chọn từ preview -> checkout",
+      "status": "PASS",
+      "detail": "flight=0 + hotel=0 card; chọn -> checkout OK; ảnh 02-preview-checkout.png"
+    },
+    {
+      "id": "4",
+      "title": "HOME: navigation 5 mục hoạt động, URL hash đúng, không 404 sai",
+      "status": "PASS",
+      "detail": "5 nav items -> hash + section đúng, không trang lỗi"
+    },
+    {
+      "id": "5",
+      "title": "HOME: footer links hoạt động (4 link dịch vụ + không lỗi)",
+      "status": "PASS",
+      "detail": "4 footer links + brand OK, 0 pageerror"
+    },
+    {
+      "id": "6",
+      "title": "HOME: loading state (skeleton) khi API chậm, dữ liệu hiện khi xong",
+      "status": "PASS",
+      "detail": "skeleton=có; dữ liệu load xong"
+    },
+    {
+      "id": "7",
+      "title": "CHECKOUT: không thể checkout khi chưa chọn sản phẩm (guard)",
+      "status": "PASS",
+      "detail": "guard + 3 nút chọn dịch vụ hoạt động; ảnh 03-checkout-guard.png"
+    },
+    {
+      "id": "8",
+      "title": "CHECKOUT: promo không áp chéo giữa các dịch vụ (matrix đầy đủ)",
+      "status": "PASS",
+      "detail": "flight: p1/p3 ineligible, p2 -206.400; ảnh 04-cross-promo.png"
+    },
+    {
+      "id": "9",
+      "title": "CHECKOUT: refresh không crash -> guard; travel form còn attrs",
+      "status": "PASS",
+      "detail": "refresh -> guard, 0 pageerror; traveler attrs 60/15/80 + pay-btn OK"
+    },
+    {
+      "id": "10",
+      "title": "LOGIN: modal validation đầy đủ + login + session persist + logout",
+      "status": "PASS",
+      "detail": "5 validation + login + persist + logout + 0 plaintext; ảnh 05-login.png"
+    },
+    {
+      "id": "11",
+      "title": "BOOKING: flight booking tạo đúng (ID/status/traveler/price/payment)",
+      "status": "PASS",
+      "detail": "flight booking MAN934; 2.580.000; ATM; ảnh 06-booking-flight.png"
+    },
+    {
+      "id": "12",
+      "title": "BOOKING: thêm booking hotel cùng tài khoản -> 2 đơn, refresh vẫn 2",
+      "status": "PASS",
+      "detail": "2 đơn (flight+hotel) cùng finala; refresh vẫn 2; ảnh 07-booking-2.png"
+    },
+    {
+      "id": "13",
+      "title": "BOOKING: hủy đặt chỗ -> trạng thái Đã hủy + nút disabled, đơn không mất",
+      "status": "PASS",
+      "detail": "Đã hủy + disabled + persist reload, vẫn đủ 2 đơn; ảnh 08-booking-cancel.png"
+    },
+    {
+      "id": "14",
+      "title": "PAYMENT: spam click 4 lần -> không tạo thêm đơn; không booking \"ma\"",
+      "status": "PASS",
+      "detail": "spam 4 click -> đúng 3 đơn; 0 booking ma; ảnh 09-payment-spam.png"
+    },
+    {
+      "id": "15",
+      "title": "API: GET health/catalog/travel/404 qua browser — status + JSON đúng",
+      "status": "PASS",
+      "detail": "health/catalog/travel 200 + JSON; API lạ 404 JSON"
+    },
+    {
+      "id": "16",
+      "title": "ROUTING: F5 từng route (6 route) — đúng trang, không blank/crash",
+      "status": "PASS",
+      "detail": "6 route F5: đúng trang, đủ nội dung, 0 pageerror"
+    },
+    {
+      "id": "17",
+      "title": "ROUTING: 404 hiển thị đúng + Về trang chủ hoạt động",
+      "status": "PASS",
+      "detail": "404 đúng nội dung + title; Về trang chủ OK; ảnh 10-notfound.png"
+    },
+    {
+      "id": "18",
+      "title": "ROUTING: browser back/forward + hash navigation không crash",
+      "status": "PASS",
+      "detail": "back -> #/hotel; forward -> #/combo; 0 pageerror"
+    },
+    {
+      "id": "19",
+      "title": "RESPONSIVE 768px: home/flight/checkout/bookings — 0 tràn, nav + footer OK",
+      "status": "PASS",
+      "detail": "768px: home/flight/checkout/bookings 0 tràn, nav+footer OK; ảnh 11-r768.png"
+    },
+    {
+      "id": "20",
+      "title": "RESPONSIVE desktop 1440 + mobile 375: navbar/bottom-nav + 0 tràn",
+      "status": "PASS",
+      "detail": "1440 nav OK; 375 bottom-nav + footer OK, 0 tràn; ảnh 12-r375-home.png"
+    },
+    {
+      "id": "21",
+      "title": "SECURITY (browser): không qa1/qa2 trong UI, khách không có booking mặc định",
+      "status": "PASS",
+      "detail": "0 booking mặc định; không qa1/qa2/password trong UI; ảnh 13-security-ui.png"
+    },
+    {
+      "id": "22",
+      "title": "SECURITY (static): .env gitignore, không API key/secret, dist không hardcode localhost",
+      "status": "PASS",
+      "detail": ".env không track + gitignore OK; 0 API key; 0 password lưu; dist (1 file) sạch localhost"
+    },
+    {
+      "id": "23",
+      "title": "RUNTIME: 0 console.error (ngoại trừ API chủ động) + 0 pageerror",
+      "status": "PASS",
+      "detail": "console.error=0; pageerror=0"
+    }
+  ]
+}

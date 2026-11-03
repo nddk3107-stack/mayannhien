@@ -1,0 +1,17 @@
+=== QA ROOM (E2E) — Mây An Nhiên ===
+PASS [R1] #/rooms khi chưa chọn khách sạn -> guard, không crash -- guard đúng + nút điều hướng về #/hotel
+PASS [R2] Trang phòng: >=2 phòng, tiện nghi, giá/đêm, badge, ảnh -- 3 phòng, 7 chip tiện nghi, giá 1.850.000/đêm; ảnh 01-rooms.png
+PASS [R3] Mỗi phòng có tiện nghi riêng (không hard-code chung) -- phòng A "Phòng Deluxe Giáp Biển" != phòng B "Phòng Suite View Biển" (tiện nghi khác nhau)
+PASS [R4] Checkout phòng: ảnh, thông tin, ngày, tiện nghi theo nhóm, giá đúng -- 5 nhóm tiện nghi; giá đúng; ảnh 02-checkout.png
+PASS [R5] F5 tại checkout phòng -> vẫn còn phòng đã chọn (sessionStorage) -- reload -> phòng vẫn hiển thị + sessionStorage còn
+PASS [R6] Tab mới (chưa chọn gì) vào #/checkout-hotel -> guard, không crash -- guard đúng ở tab mới + nút về #/hotel
+PASS [R7] Đổi số đêm và số phòng -> tổng tiền phòng tính lại tức thì -- 5 đêm=9.250.000; ×2 phòng=18.500.000; khôi phục=5.550.000
+PASS [R8] Voucher: rỗng/sai mã/sai loại đều chặn; hợp lệ + tự kiểm lại khi đổi ngày -- rỗng/sai mã/sai loại chặn; SALECUOITUAN=666.000; đổi ngày tự tính lại; ảnh 03-voucher.png
+PASS [R9] Pay chưa đăng nhập -> login gate; lỗi form hiện cạnh ô; đăng nhập OK -- login gate + lỗi cạnh ô + đăng nhập roomqa, 0 plaintext; ảnh 04-logingate.png
+PASS [R10] Double-click thanh toán -> đúng 1 booking phòng, thông tin đầy đủ -- booking MAN342; 1 đơn duy nhất; 4.884.000; ảnh 05-booking.png
+PASS [R11] Reload vẫn giữ booking; logout ẩn đơn; login lại thấy đủ -- reload=1; logout=0; login lại=1; ảnh 06-persistence.png
+PASS [R12] Flight + combo vẫn dùng checkout chung với mã giảm giá chip -- flight: chip promo OK; combo: Đặt ngay -> checkout OK
+PASS [R13] Mobile 375px: rooms + checkout không tràn, bottom-nav đủ -- 375px: 0 tràn ngang ở hotel/rooms/checkout; ảnh 07-mobile375.png
+PASS [R14] Runtime: 0 pageerror + 0 console.error (ngoại trừ 400 có chủ đích) -- pageerror=0; console.error=0
+
+TONG: 14 | PASS: 14 | FAIL: 0

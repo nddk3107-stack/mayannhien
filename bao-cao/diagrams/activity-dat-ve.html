@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="vi"><head><meta charset="utf-8"><style>body{margin:0;font-family:Arial,sans-serif}</style></head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1315" viewBox="0 0 900 1315">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#1f3b73"/></marker>
+    <style>
+      .n{fill:#eef4ff;stroke:#1f3b73;stroke-width:1.8}
+      .s{fill:#fff7e6;stroke:#b7791f;stroke-width:1.8}
+      .d{fill:#fde8e8;stroke:#c53030;stroke-width:1.8}
+      .t{font:14px Arial;fill:#111}
+      .c{font:14px Arial;fill:#111;text-anchor:middle}
+      .l{font:12.5px Arial;fill:#1f3b73}
+    </style>
+  </defs>
+  <rect x="0" y="0" width="900" height="1315" fill="#ffffff"/>
+  <text x="450" y="26" text-anchor="middle" font-size="19" font-weight="bold" fill="#1f3b73">Sơ đồ Activity — Quy trình tìm kiếm và đặt vé máy bay</text>
+
+  <circle cx="400" cy="56" r="15" fill="#1f3b73"/>
+  <line x1="400" y1="71" x2="400" y2="96" stroke="#1f3b73" stroke-width="2" marker-end="url(#arr)"/>
+
+  <rect class="n" x="230" y="98" width="340" height="56" rx="8"/>
+  <text class="c" x="400" y="122">Nhập thông tin tìm kiếm</text>
+  <text class="c" x="400" y="142" font-size="12.5">(điểm đến, ngày đi/về, số khách, loại dịch vụ)</text>
+  <line x1="400" y1="154" x2="400" y2="178" stroke="#1f3b73" stroke-width="2" marker-end="url(#arr)"/>
+
+  <polygon class="d" points="400,180 492,222 400,264 308,222"/>
+  <text class="c" x="400" y="227">Dữ liệu hợp lệ?</text>
+  <line x1="308" y1="222" x2="195" y2="222" stroke="#c53030" stroke-width="2" marker-end="url(#arr)"/>
+  <text class="l" x="252" y="212" text-anchor="middle" fill="#c53030">Không</text>
+  <rect class="s" x="20" y="194" width="175" height="56" rx="8"/>
+  <text class="c" x="107" y="227">Hiển thị toast lỗi</text>
+  <path d="M107,194 V126 H228" fill="none" stroke="#b7791f" stroke-width="2" marker-end="url(#arr)"/>
+
+  <line x1="400" y1="264" x2="400" y2="290" stroke="#1f3b73" stroke-width="2" marker-end="url(#arr)"/>
+  <text class="l" x="412" y="284">Có</text>
+
+  <rect class="n" x="230" y="292" width="340" height="56" rx="8"/>
+  <text class="c" x="400" y="316">Tải dữ liệu từ API</text>
+  <text class="c" x="400" y="336" font-size="12.5">(hiển thị skeleton khi chờ)</text>
+  <line x1="400" y1="348" x2="400" y2="374" stroke="#1f3b73" stroke-width="2" marker-end="url(#arr)"/>
+
+  <rect class="n" x="230" y="376" width="340" height="56" rx="8"/>
+  <text class="c" x="400" y="400">Lọc &amp; hiển thị kết quả</text>
+  <text class="c" x="400" y="420" font-size="12.5">(từ khóa, khuyến mãi, giá, đánh giá...)</text>
+  <line x1="400" y1="432" x2="400" y2="456" stroke="#1f3b73" stroke-width="2" marker-end="url(#arr)"/>
+
+  <polygon class="d" points="400,458 492,500 400,542 308,500"/>
+  <text class="c" x="400" y="505">Có kết quả?</text>
+  <line x1="308" y1="500" x2="195" y2="500" stroke="#c53030" stroke-width="2" marker-end="url(#arr)"/>
+  <text class="l" x="252" y="490" text-anchor="middle" fill="#c53030">Không</text>
+  <rect class="s" x="20" y="472" width="175" height="56" rx="8"/>
+  <text class="c" x="107" y="494" font-size="13">Empty state: không tìm</text>
+  <text class="c" x="107" y="514" font-size="13">thấy + hướng dẫn</text>
+
+  <line x1="400" y1="542" x2="400" y2="568" stroke="#1f3b73" stroke-width="2" marker-end="url(#arr)"/>
+  <text class="l" x="412" y="562">Có</text>
+
+  <rect class="n" x="230" y="570" width="340" height="56" rx="8"/>
+  <text class="c" x="400" y="594">Chọn dịch vụ (Chọn vé / Đặt ngay)</text>
+  <text class="c" x="400" y="614" font-size="12.5">→ trang Thanh toán (checkout)</text>
+  <line x1="400" y1="626" x2="400" y2="652" stroke="#1f3b73" stroke-width="2" marker-end="url(#arr)"/>
+
+  <rect class="n" x="230" y="654" width="340" height="56" rx="8"/>
+  <text class="c" x="400" y="678">Điền thông tin người đặt</text>
+  <text class="c" x="400" y="698" font-size="12.5">(họ tên, số điện thoại, email)</text>
+  <line x1="400" y1="710" x2="400" y2="736" stroke="#1f3b73" stroke-width="2" marker-end="url(#arr)"/>
+
+  <rect class="n" x="230" y="738" width="340" height="56" rx="8"/>
+  <text class="c" x="400" y="771">Bấm “Xác nhận và thanh toán”</text>
+  <line x1="400" y1="794" x2="400" y2="820" stroke="#1f3b73" stroke-width="2" marker-end="url(#arr)"/>
+
+  <polygon class="d" points="400,822 492,864 400,906 308,864"/>
+  <text class="c" x="400" y="869">Đã đăng nhập?</text>
+  <line x1="492" y1="864" x2="573" y2="864" stroke="#c53030" stroke-width="2" marker-end="url(#arr)"/>
+  <text class="l" x="533" y="854" text-anchor="middle" fill="#c53030">Không</text>
+
+  <rect class="s" x="575" y="836" width="245" height="56" rx="8"/>
+  <text class="c" x="697" y="869">Mở LoginModal (login gate)</text>
+  <line x1="697" y1="892" x2="697" y2="918" stroke="#b7791f" stroke-width="2" marker-end="url(#arr)"/>
+  <rect class="s" x="575" y="920" width="245" height="56" rx="8"/>
+  <text class="c" x="697" y="944">Nhập email &amp; mật khẩu</text>
+  <text class="c" x="697" y="964" font-size="12.5">(validate email, password ≥ 6)</text>
+  <line x1="697" y1="976" x2="697" y2="1002" stroke="#b7791f" stroke-width="2" marker-end="url(#arr)"/>
+  <polygon class="d" points="697,1004 789,1046 697,1088 605,1046"/>
+  <text class="c" x="697" y="1051">Hợp lệ?</text>
+  <line x1="697" y1="1088" x2="697" y2="1114" stroke="#c53030" stroke-width="2" marker-end="url(#arr)"/>
+  <text class="l" x="707" y="1108" fill="#c53030">Không</text>
+  <rect class="s" x="575" y="1116" width="245" height="56" rx="8"/>
+  <text class="c" x="697" y="1149">Hiển thị lỗi trong modal</text>
+  <path d="M820,1144 H848 V948 H822" fill="none" stroke="#b7791f" stroke-width="2" marker-end="url(#arr)"/>
+
+  <line x1="605" y1="1046" x2="493" y2="1046" stroke="#276749" stroke-width="2" marker-end="url(#arr)"/>
+  <text class="l" x="550" y="1036" text-anchor="middle" fill="#276749">Có</text>
+
+  <line x1="400" y1="906" x2="400" y2="1002" stroke="#1f3b73" stroke-width="2" marker-end="url(#arr)"/>
+  <text class="l" x="412" y="956">Có (đã đăng nhập)</text>
+
+  <polygon class="d" points="400,1004 492,1046 400,1088 308,1046"/>
+  <text class="c" x="400" y="1043" font-size="13">Form người đặt</text>
+  <text class="c" x="400" y="1061" font-size="13">hợp lệ?</text>
+  <line x1="308" y1="1046" x2="195" y2="1046" stroke="#c53030" stroke-width="2" marker-end="url(#arr)"/>
+  <text class="l" x="252" y="1036" text-anchor="middle" fill="#c53030">Không</text>
+  <rect class="s" x="20" y="1018" width="175" height="56" rx="8"/>
+  <text class="c" x="107" y="1051">Hiển thị toast lỗi</text>
+  <path d="M107,1018 V682 H228" fill="none" stroke="#b7791f" stroke-width="2" marker-end="url(#arr)"/>
+
+  <line x1="400" y1="1088" x2="400" y2="1114" stroke="#1f3b73" stroke-width="2" marker-end="url(#arr)"/>
+  <text class="l" x="412" y="1108">Có</text>
+
+  <rect class="n" x="230" y="1116" width="340" height="50" rx="8"/>
+  <text class="c" x="400" y="1146">Mô phỏng xử lý thanh toán 700ms</text>
+  <line x1="400" y1="1166" x2="400" y2="1186" stroke="#1f3b73" stroke-width="2" marker-end="url(#arr)"/>
+
+  <rect class="n" x="230" y="1188" width="340" height="50" rx="8"/>
+  <text class="c" x="400" y="1218">Tạo đơn &amp; lưu localStorage (theo email)</text>
+  <line x1="400" y1="1238" x2="400" y2="1258" stroke="#1f3b73" stroke-width="2" marker-end="url(#arr)"/>
+
+  <rect class="n" x="230" y="1260" width="340" height="50" rx="8"/>
+  <text class="c" x="400" y="1290">Chuyển trang “Đặt chỗ của tôi” + toast</text>
+</svg>
+</body></html>

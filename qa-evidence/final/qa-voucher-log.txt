@@ -1,0 +1,17 @@
+=== QA VOUCHER (API) — Mây An Nhiên ===
+PASS [1] Server tạm + catalog.rooms có dữ liệu phòng -- health ok; 7 phòng
+PASS [2] Voucher hợp lệ SALECUOITUAN (hotel) -> giảm đúng -- 5.550.000 - 12% = 666.000 -> 4.884.000
+PASS [3] Mã không tồn tại -> 400 + thông báo rõ -- Mã voucher không tồn tại hoặc đã ngừng hoạt động.
+PASS [4] Voucher hết hạn (HETHAN) -> 400 -- Mã voucher đã hết hạn hoặc chưa đến ngày áp dụng.
+PASS [5] Sai loại dịch vụ (BAYNGAY cho hotel) -> 400; flight vẫn OK -- hotel bị từ chối; flight vẫn hợp lệ
+PASS [6] Thiếu giá trị đơn tối thiểu (TOITHIEU) -> 400; đủ thì OK -- 1.850.000 bị chặn; 12.000.000 -> giảm 2.400.000
+PASS [7] Hết lượt sử dụng (HETLUOT) -> 400 -- Mã voucher đã hết lượt sử dụng.
+PASS [8] Đăng nhập API để tạo đơn kiểm thử -- đăng nhập ok (tự tạo tài khoản demo), cookie phiên nhận được
+PASS [9] Client gian lận TỔNG TIỀN -> server tự tính lại đúng -- server trả total=4.884.000 (bỏ qua total=1); Phòng Deluxe Giáp Biển x3 dem
+PASS [10] Gian lận phòng/ngày bi LOI ro (khong an tham sua) -- ngay sai / 99 phong / 99 nguoi lon deu bi 409
+PASS [11] strictVoucher: voucher het hieu luc luc dat -> 409 (khong giam len) -- Mã voucher đã hết lượt sử dụng.
+PASS [12] Gioi han luot GIOIHAN (1/2 con lai): don 1 duoc, don 2 bi chan -- luot 2/2 xong -> don ke bi chan (khong vuot gioi han)
+PASS [13] Idempotency: gui lai cung key -> khong tao trung -- gui lai -> duplicate, giu nguyen ma MAN3804124
+PASS [14] API khong ton tai -> 404 JSON -- 404 JSON dung
+
+TONG: 14 | PASS: 14 | FAIL: 0

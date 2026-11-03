@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="vi"><head><meta charset="utf-8"><style>body{margin:0;font-family:Arial,sans-serif}</style></head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="740" viewBox="0 0 980 740">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#1f3b73"/></marker>
+  </defs>
+  <rect x="0" y="0" width="980" height="740" fill="#ffffff"/>
+  <text x="490" y="30" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f3b73">Sơ đồ Use Case — Hệ thống đặt dịch vụ du lịch Mây An Nhiên</text>
+
+  <!-- System boundary -->
+  <rect x="250" y="50" width="540" height="660" rx="6" fill="#fbfdff" stroke="#1f3b73" stroke-width="2"/>
+  <text x="520" y="78" text-anchor="middle" font-size="15" font-weight="bold" fill="#1f3b73">Hệ thống đặt vé máy bay / khách sạn / combo</text>
+
+  <!-- Actor left -->
+  <circle cx="90" cy="270" r="20" fill="none" stroke="#111" stroke-width="2.5"/>
+  <line x1="90" y1="290" x2="90" y2="370" stroke="#111" stroke-width="2.5"/>
+  <line x1="55" y1="320" x2="125" y2="320" stroke="#111" stroke-width="2.5"/>
+  <line x1="90" y1="370" x2="55" y2="425" stroke="#111" stroke-width="2.5"/>
+  <line x1="90" y1="370" x2="125" y2="425" stroke="#111" stroke-width="2.5"/>
+  <text x="90" y="452" text-anchor="middle" font-size="15" font-weight="bold">Khách hàng</text>
+
+  <!-- Actor right: API -->
+  <circle cx="890" cy="270" r="20" fill="none" stroke="#276749" stroke-width="2.5"/>
+  <line x1="890" y1="290" x2="890" y2="370" stroke="#276749" stroke-width="2.5"/>
+  <line x1="855" y1="320" x2="925" y2="320" stroke="#276749" stroke-width="2.5"/>
+  <line x1="890" y1="370" x2="855" y2="425" stroke="#276749" stroke-width="2.5"/>
+  <line x1="890" y1="370" x2="925" y2="425" stroke="#276749" stroke-width="2.5"/>
+  <text x="890" y="452" text-anchor="middle" font-size="14" font-weight="bold" fill="#276749">Máy chủ Express</text>
+  <text x="890" y="474" text-anchor="middle" font-size="14" font-weight="bold" fill="#276749">API</text>
+  <text x="890" y="506" text-anchor="middle" font-size="12" fill="#276749">Cung cấp catalog &amp; nội dung</text>
+  <text x="890" y="524" text-anchor="middle" font-size="12" fill="#276749">(GET /api/catalog, /api/travel)</text>
+
+  <!-- Use cases -->
+  <ellipse cx="520" cy="130" rx="160" ry="36" fill="#eef4ff" stroke="#1f3b73" stroke-width="1.8"/>
+  <text x="520" y="135" text-anchor="middle" font-size="14">Tìm kiếm dịch vụ (vé / khách sạn / combo)</text>
+  <ellipse cx="520" cy="215" rx="160" ry="36" fill="#eef4ff" stroke="#1f3b73" stroke-width="1.8"/>
+  <text x="520" y="220" text-anchor="middle" font-size="14">Lọc kết quả &amp; xem khuyến mãi</text>
+  <ellipse cx="520" cy="300" rx="160" ry="36" fill="#eef4ff" stroke="#1f3b73" stroke-width="1.8"/>
+  <text x="520" y="305" text-anchor="middle" font-size="14">Chọn dịch vụ để đặt</text>
+  <ellipse cx="520" cy="385" rx="160" ry="36" fill="#eef4ff" stroke="#1f3b73" stroke-width="1.8"/>
+  <text x="520" y="390" text-anchor="middle" font-size="14">Áp dụng mã giảm giá</text>
+  <ellipse cx="520" cy="470" rx="160" ry="36" fill="#fff7e6" stroke="#b7791f" stroke-width="1.8"/>
+  <text x="520" y="475" text-anchor="middle" font-size="14">Đăng nhập (mô phỏng client)</text>
+  <ellipse cx="520" cy="555" rx="160" ry="36" fill="#e9f7ef" stroke="#276749" stroke-width="1.8"/>
+  <text x="520" y="560" text-anchor="middle" font-size="14">Thanh toán mô phỏng &amp; tạo đơn</text>
+  <ellipse cx="520" cy="645" rx="160" ry="36" fill="#eef4ff" stroke="#1f3b73" stroke-width="1.8"/>
+  <text x="520" y="650" text-anchor="middle" font-size="14">Xem / hủy danh sách đặt chỗ</text>
+
+  <!-- Associations from Khách hàng -->
+  <g stroke="#1f3b73" stroke-width="1.6">
+    <line x1="126" y1="335" x2="360" y2="133"/>
+    <line x1="126" y1="340" x2="360" y2="216"/>
+    <line x1="126" y1="345" x2="360" y2="300"/>
+    <line x1="126" y1="350" x2="360" y2="384"/>
+    <line x1="126" y1="355" x2="360" y2="468"/>
+    <line x1="126" y1="360" x2="360" y2="553"/>
+    <line x1="126" y1="365" x2="360" y2="643"/>
+  </g>
+
+  <!-- include: thanh toán -> đăng nhập -->
+  <line x1="430" y1="519" x2="430" y2="507" stroke="#b7791f" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arr)"/>
+  <text x="420" y="517" text-anchor="end" font-size="12.5" fill="#7c4a03">«include»</text>
+
+  <!-- API dashed -->
+  <line x1="858" y1="330" x2="794" y2="300" stroke="#276749" stroke-width="1.8" stroke-dasharray="7 5" marker-end="url(#arr)"/>
+  <text x="790" y="326" text-anchor="end" font-size="12.5" fill="#276749">«cung cấp dữ liệu»</text>
+
+  <text x="490" y="730" text-anchor="middle" font-size="13" fill="#555">Chú thích: orange = đăng nhập mô phỏng (không backend auth); green = thanh toán mô phỏng client-side, không gọi cổng thanh toán thật.</text>
+</svg>
+</body></html>

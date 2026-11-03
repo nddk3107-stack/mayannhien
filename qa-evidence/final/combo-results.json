@@ -1,0 +1,110 @@
+{
+  "module": "COMBO",
+  "total": 17,
+  "passed": 17,
+  "failed": 0,
+  "results": [
+    {
+      "id": "1",
+      "title": "Trang combo load thành công + runtime 0 lỗi",
+      "status": "PASS",
+      "detail": "hero OK; 3 combo; title=\"Combo du lịch - Mây An Nhiên\"; ảnh 01-load.png"
+    },
+    {
+      "id": "2",
+      "title": "Search keyword hợp lệ từ home -> combo lọc đúng",
+      "status": "PASS",
+      "detail": "1 kết quả Combo Marina Bay; summary OK; ảnh 02-search.png"
+    },
+    {
+      "id": "3",
+      "title": "Search keyword không tồn tại -> empty state",
+      "status": "PASS",
+      "detail": "empty state đúng; 0 card; ảnh 03-empty.png"
+    },
+    {
+      "id": "4",
+      "title": "Chọn combo — thông tin truyền đúng sang checkout",
+      "status": "PASS",
+      "detail": "Dịch vụ=Combo du lịch; tên combo + nhãn ngày đúng; ảnh 04-checkout.png"
+    },
+    {
+      "id": "5",
+      "title": "Giá gốc / 3 mã giảm giá áp đúng cho combo / tổng đúng",
+      "status": "PASS",
+      "detail": "gốc 2.690.000; p1 -322.800; p3 -672.500; p2 -215.200; ảnh 05-promo.png"
+    },
+    {
+      "id": "6",
+      "title": "Ngày nhận/trả hiển thị + validation ngày phía app",
+      "status": "PASS",
+      "detail": "nhận 2026-11-08 -> trả 2026-11-11; toast quá khứ đúng"
+    },
+    {
+      "id": "7",
+      "title": "Login gate: pay khi chưa đăng nhập -> modal, validation login, không plaintext",
+      "status": "PASS",
+      "detail": "gate chặn + validation OK + login comboa; 0 plaintext; ảnh 06-logingate.png"
+    },
+    {
+      "id": "8",
+      "title": "Form khách: rỗng / tên ngắn / SĐT sai / email sai / hợp lệ",
+      "status": "PASS",
+      "detail": "rỗng/tên ngắn/SĐT/email đều bị chặn; hợp lệ đã điền"
+    },
+    {
+      "id": "9",
+      "title": "Chọn 3 phương thức thanh toán — summary phản ánh đúng",
+      "status": "PASS",
+      "detail": "ATM / Thẻ quốc tế / Ví điện tử đổi đúng trong summary"
+    },
+    {
+      "id": "10",
+      "title": "Payment thành công -> booking combo tạo đúng + hiện ở Đặt chỗ của tôi",
+      "status": "PASS",
+      "detail": "booking MAN375; tổng 2.367.200; Ví điện tử; ảnh 07-booking.png"
+    },
+    {
+      "id": "11",
+      "title": "Reload trang bookings -> đơn vẫn tồn tại (lưu localStorage)",
+      "status": "PASS",
+      "detail": "reload -> còn nguyên 1 booking + session comboa"
+    },
+    {
+      "id": "12",
+      "title": "Isolation: logout -> trống; tài khoản B không thấy đơn A; login lại A -> còn",
+      "status": "PASS",
+      "detail": "khách=0; combob=0; comboa=1; ảnh 08-isolation.png"
+    },
+    {
+      "id": "13",
+      "title": "Double-click thanh toán -> chỉ tạo thêm đúng 1 đơn (không trùng)",
+      "status": "PASS",
+      "detail": "bấm đôi -> đúng 2 đơn (không nhân đôi); ảnh 09-double.png"
+    },
+    {
+      "id": "14",
+      "title": "Back-btn từ checkout về home; browser back/forward không crash",
+      "status": "PASS",
+      "detail": "back-btn -> home; goBack/goForward không crash, URL sạch"
+    },
+    {
+      "id": "15",
+      "title": "Mobile 375/390/430: không tràn ngang, card + pay + bottom-nav hiển thị",
+      "status": "PASS",
+      "detail": "375/390/430: 0 tràn, card+pay+bottom-nav OK; ảnh 10-mobile375.png"
+    },
+    {
+      "id": "16",
+      "title": "API: skeleton loading, lỗi API -> banner + không crash, retry -> khôi phục",
+      "status": "PASS",
+      "detail": "skeleton=có; fallback 3 card; banner+strip+retry OK; ảnh 11-api.png"
+    },
+    {
+      "id": "17",
+      "title": "Runtime: 0 console.error (ngoại trừ API chủ động) + 0 pageerror",
+      "status": "PASS",
+      "detail": "console.error=0; pageerror=0; không có plaintext password"
+    }
+  ]
+}

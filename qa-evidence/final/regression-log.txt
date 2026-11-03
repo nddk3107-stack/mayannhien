@@ -1,0 +1,26 @@
+=== FINAL REGRESSION ===
+Sat Oct 10 22:23:14 +07 2026
+--- LINT ---
+
+Found 0 warnings and 0 errors.
+Finished in 54ms on 10 files with 104 rules using 8 threads.
+lint_exit:0
+--- BUILD ---
+dist/assets/index-9z90r9sS.css   26.53 kB │ gzip:  6.36 kB
+dist/assets/index-Cb0KgTks.js   261.34 kB │ gzip: 79.97 kB
+
+✓ built in 129ms
+build_exit:0
+--- E2E ---
+TONG: 29 | PASS: 29 | FAIL: 0
+e2e_exit:0
+--- FLIGHT ---
+TONG: 17 | PASS: 17 | FAIL: 0
+flight_exit:0
+--- HOTEL ---
+TONG: 18 | PASS: 18 | FAIL: 0
+hotel_exit:0
+--- COMBO ---
+TONG: 17 | PASS: 17 | FAIL: 0
+combo_exit:0
+=== DONE ===

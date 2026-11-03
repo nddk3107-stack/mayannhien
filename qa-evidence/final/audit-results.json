@@ -1,0 +1,152 @@
+{
+  "module": "AUDIT",
+  "total": 24,
+  "passed": 24,
+  "failed": 0,
+  "results": [
+    {
+      "id": "A0",
+      "title": "Đăng nhập admin trên DB tạm",
+      "status": "PASS",
+      "detail": "admin login ok"
+    },
+    {
+      "id": "M1",
+      "title": "Admin tạo voucher có min_order = 5.000.000",
+      "status": "PASS",
+      "detail": "tạo OK, minOrder=5000000"
+    },
+    {
+      "id": "M2",
+      "title": "Admin sửa min_order voucher đã tồn tại",
+      "status": "PASS",
+      "detail": "sửa OK -> 8000000"
+    },
+    {
+      "id": "M3",
+      "title": "Voucher cũ SALECUOITUAN giữ nguyên min_order = 0",
+      "status": "PASS",
+      "detail": "SALECUOITUAN minOrder=0 (không hỏng)"
+    },
+    {
+      "id": "M4",
+      "title": "Đơn dưới mức tối thiểu bị từ chối (1.850.000 < 5.000.000)",
+      "status": "PASS",
+      "detail": "Đơn tối thiểu 5.000.000đ để dùng mã này."
+    },
+    {
+      "id": "M5",
+      "title": "Đơn đạt mức tối thiểu được áp dụng đúng (6.000.000 >= 5.000.000)",
+      "status": "PASS",
+      "detail": "giảm 600000 -> tổng 5400000"
+    },
+    {
+      "id": "M6",
+      "title": "User thường KHÔNG gọi được API admin sửa voucher",
+      "status": "PASS",
+      "detail": "user=403; guest=401"
+    },
+    {
+      "id": "M7",
+      "title": "Giá trị min_order không hợp lệ (âm / chuỗi / null / quá lớn) bị từ chối",
+      "status": "PASS",
+      "detail": "âm/chuỗi/null/quá lớn đều 400"
+    },
+    {
+      "id": "M8",
+      "title": "Restart backend — min_order vẫn còn trong database",
+      "status": "PASS",
+      "detail": "restart -> MOITAO=8.000.000, SALECUOITUAN=0"
+    },
+    {
+      "id": "S0",
+      "title": "Đăng nhập 2 user để kiểm tra cách ly & thanh toán",
+      "status": "PASS",
+      "detail": "2 user đăng nhập ok"
+    },
+    {
+      "id": "S1",
+      "title": "Client gửi fake total/discount/status/paymentStatus -> server bỏ qua",
+      "status": "PASS",
+      "detail": "fake total/paymentStatus bị bỏ qua; server tự tính"
+    },
+    {
+      "id": "S2",
+      "title": "Gửi lặp cùng idempotencyKey -> duplicate:true, không tạo đơn thứ 2",
+      "status": "PASS",
+      "detail": "replay -> duplicate, giữ nguyên mã MAN4438292"
+    },
+    {
+      "id": "S3",
+      "title": "Guest không POST /bookings được (401) + thiếu CSRF header bị chặn (403)",
+      "status": "PASS",
+      "detail": "guest=401; thiếu CSRF header=403"
+    },
+    {
+      "id": "S4",
+      "title": "User thường bị chặn mọi endpoint Admin (GET/PATCH)",
+      "status": "PASS",
+      "detail": "user thường: admin GET/PATCH đều 403"
+    },
+    {
+      "id": "S5",
+      "title": "Cách ly: User A không thấy / không hủy được booking của User B",
+      "status": "PASS",
+      "detail": "A không thấy & không hủy được đơn của B (404)"
+    },
+    {
+      "id": "S6",
+      "title": "Đơn đã hủy không thể tự \"xác nhận\" lại qua user API (cancel lần 2 = 409)",
+      "status": "PASS",
+      "detail": "đơn đã hủy không chuyển được trạng thái trái phép (user API)"
+    },
+    {
+      "id": "P1",
+      "title": "Security headers + CSP + CORS không wildcard",
+      "status": "PASS",
+      "detail": "security headers + CSP chặt, CORS không wildcard"
+    },
+    {
+      "id": "P2",
+      "title": "Endpoint 404 trả JSON (không lộ stack trace)",
+      "status": "PASS",
+      "detail": "404 JSON sạch, không lộ stack trace"
+    },
+    {
+      "id": "P3",
+      "title": "Rate limit chặn dò voucher hàng loạt (429)",
+      "status": "PASS",
+      "detail": "429 được trả khi vượt hạn mức"
+    },
+    {
+      "id": "P4",
+      "title": "IPN MoMo sai chữ ký -> KHÔNG đánh dấu paid",
+      "status": "PASS",
+      "detail": "IPN sai chữ ký bị bỏ qua, không đơn nào paid"
+    },
+    {
+      "id": "P5",
+      "title": "Tạo phiên thanh toán khi chưa cấu hình MoMo -> 503 (không giả lập tiền thật)",
+      "status": "PASS",
+      "detail": "cổng thanh toán tắt khi chưa có credentials: 503"
+    },
+    {
+      "id": "P6",
+      "title": "Config thanh toán KHÔNG lộ secret ra ngoài",
+      "status": "PASS",
+      "detail": "config chỉ trả cờ enabled/live, không lộ secret"
+    },
+    {
+      "id": "P7",
+      "title": "Admin audit-log ghi nhận thao tác quản trị",
+      "status": "PASS",
+      "detail": "2 bản ghi audit-log (có đủ actor/action/created_at)"
+    },
+    {
+      "id": "P8",
+      "title": "User thường KHÔNG đọc được audit-log của admin",
+      "status": "PASS",
+      "detail": "user thường bị chặn 403"
+    }
+  ]
+}
