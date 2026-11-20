@@ -2,6 +2,23 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import './App.css'
 import AdminApp from './Admin.jsx'
 import { API_BASE, apiFetch, apiPatch } from './api.js'
+import { PAYMENT_METHODS, PaymentMethodSelector } from './components/PaymentMethodSelector.jsx'
+import { FlightBookingMomo } from './components/FlightBookingMomo.jsx'
+import {
+  ActivityPage,
+  AirportTransferPage,
+  BusPage,
+  InsurancePage,
+  TrainPage,
+  TrustInfoModal,
+} from './components/ExtraServicePages.jsx'
+import {
+  FLIGHT_SEAT_COLS,
+  FLIGHT_SEAT_ROWS,
+  OCCUPIED_FLIGHT_SEATS,
+  SEAT_CLASSES,
+  formatDateVN,
+} from './data/extraServices.js'
 
 const formatCurrency = (value) =>
   new Intl.NumberFormat('vi-VN', {
@@ -143,7 +160,11 @@ const defaultDepart = toISO(new Date(Date.now() + 7 * 86400000))
 const defaultReturn = toISO(new Date(Date.now() + 10 * 86400000))
 const todayISO = toISO(new Date())
 
-const KNOWN_PAGES = ['home', 'flight', 'hotel', 'combo', 'checkout', 'rooms', 'checkout-hotel', 'bookings', 'admin']
+const KNOWN_PAGES = [
+  'home', 'flight', 'hotel', 'combo',
+  'activity', 'car', 'bus', 'train', 'insurance',
+  'checkout', 'rooms', 'checkout-hotel', 'bookings', 'admin',
+]
 
 const pageFromHash = () => {
   const raw = window.location.hash.replace(/^#\/?/, '').trim()
@@ -219,11 +240,24 @@ const groupAmenities = (amenities) => {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const PHONE_RE = /^(0|\+84)\d{8,10}$/
 
-const PAYMENT_METHODS = [
-  { id: 'atm', label: 'Thẻ ATM nội địa' },
-  { id: 'wallet', label: 'Ví điện tử (MoMo, ZaloPay)' },
-  { id: 'card', label: 'Thẻ quốc tế' },
-]
+const SERVICE_LABELS = {
+  flight: 'Vé máy bay',
+  hotel: 'Khách sạn',
+  combo: 'Combo du lịch',
+  activity: 'Vui chơi & Trải nghiệm',
+  car: 'Đưa đón sân bay',
+  bus: 'Xe khách',
+  train: 'Tàu hỏa',
+  insurance: 'Bảo hiểm du lịch',
+}
+
+const getServiceTypeOfItem = (item) => {
+  if (!item) return 'flight'
+  if (item.serviceType && SERVICE_LABELS[item.serviceType]) return item.serviceType
+  if (item.airline) return 'flight'
+  if (typeof item.id === 'string' && item.id.startsWith('combo')) return 'combo'
+  return 'hotel'
+}
 
 // Tính phần trăm giảm giá: mỗi mã chỉ áp đúng loại dịch vụ của nó.
 // Ưu tiên dữ liệu từ database (rate + appliesTo do admin quản lý); fallback luật cũ.
@@ -323,6 +357,8 @@ function App() {
   const [session, setSession] = useState(loadSession)
   const [loginOpen, setLoginOpen] = useState(false)
   const [registerOpen, setRegisterOpen] = useState(false)
+  const [trustModal, setTrustModal] = useState(null) // null | 'security' | 'support'
+  const [reviewModalHotel, setReviewModalHotel] = useState(null)
   // Chọn phòng (trang #/rooms + #/checkout-hotel): lưu theo tab để refresh không mất.
   const [selectedHotelId, setSelectedHotelId] = useState(loadHotelSelection)
   const [selectedRoomIds, setSelectedRoomIds] = useState(loadRoomSelection)
@@ -435,12 +471,18 @@ function App() {
   }, [catalogNonce])
 
   useEffect(() => {
+    setReviewModalHotel(null)
     window.scrollTo({ top: 0, behavior: 'smooth' })
     const titles = {
       home: 'Mây An Nhiên - Đặt dịch vụ du lịch',
       flight: 'Vé máy bay - Mây An Nhiên',
       hotel: 'Khách sạn - Mây An Nhiên',
       combo: 'Combo du lịch - Mây An Nhiên',
+      activity: 'Vui chơi & Trải nghiệm - Mây An Nhiên',
+      car: 'Đưa đón sân bay - Mây An Nhiên',
+      bus: 'Xe khách - Mây An Nhiên',
+      train: 'Tàu hỏa - Mây An Nhiên',
+      insurance: 'Bảo hiểm du lịch - Mây An Nhiên',
       checkout: 'Thanh toán - Mây An Nhiên',
       rooms: 'Chọn phòng - Mây An Nhiên',
       'checkout-hotel': 'Thanh toán đặt phòng - Mây An Nhiên',
@@ -519,7 +561,9 @@ function App() {
       notify('Ngày về phải sau ngày đi. Vui lòng chọn lại.')
       return
     }
-    const targetPage = service === 'hotel' ? 'hotel' : service === 'combo' ? 'combo' : 'flight'
+    const targetPage = ['flight', 'hotel', 'combo', 'activity', 'car', 'bus', 'train', 'insurance'].includes(service)
+      ? service
+      : 'flight'
     setAppliedSearch({ keyword: trimmed, service, tripType, dates, passengers })
     setPage(targetPage)
     notify(`Đang tìm ${services.find((item) => item.id === service)?.label.toLowerCase()} cho "${trimmed}"`)
@@ -555,20 +599,22 @@ function App() {
   }
 
   // Kiểm tra phiên THẬT với server (không tin role trong localStorage) + nạp đơn.
+  // Chỉ đăng xuất khi server xác nhận 401/403 (không tự đăng xuất khi ngoại tuyến hoặc lỗi 5xx).
   useEffect(() => {
     const email = session?.email
-    if (!email) return undefined
+    if (!email || session?.offline) return undefined
     let active = true
     ;(async () => {
       const res = await apiFetch('/api/auth/me')
       if (!active) return
-      if (res.networkError) return // mất mạng: giữ nguyên phiên đang hiển thị
-      if (!res.ok) {
+      if (res.networkError || res.status >= 500 || res.status === 0) return
+      if (res.status === 401 || res.status === 403) {
         // Phiên bị thu hồi hoặc tài khoản bị vô hiệu hóa -> đăng xuất ngay
         setSession(null)
         setBookings([])
         return
       }
+      if (!res.ok) return
       const user = res.data?.user
       if (user) setSession((current) => (current ? { ...current, name: user.name, role: user.role } : current))
       await migrateLegacyBookings(email)
@@ -633,9 +679,74 @@ function App() {
     return null
   }
 
+  const handleSocialLogin = async ({ provider, email, name }) => {
+    setBookings([])
+    const res = await apiFetch('/api/auth/social', {
+      method: 'POST',
+      body: { provider, email, name },
+    })
+    if (res.networkError || res.status >= 500) {
+      const offlineSession = { email, name: name || email.split('@')[0], provider, at: Date.now(), offline: true }
+      setSession(offlineSession)
+      setLoginOpen(false)
+      setRegisterOpen(false)
+      notify(`Xin chào ${offlineSession.name}! Đăng nhập bằng ${provider === 'google' ? 'Google' : 'Facebook'} thành công.`)
+      return null
+    }
+    if (!res.ok) return res.data?.error || 'Đăng nhập liên kết không thành công.'
+    const user = res.data.user
+    const nextSession = { email: user.email, name: user.name, role: user.role, provider, at: Date.now() }
+    setSession(nextSession)
+    setLoginOpen(false)
+    setRegisterOpen(false)
+    notify(`Xin chào ${nextSession.name}! Đăng nhập bằng ${provider === 'google' ? 'Google' : 'Facebook'} thành công.`)
+    await migrateLegacyBookings(nextSession.email)
+    await refreshBookings(nextSession.email)
+    return null
+  }
+
+  const handlePhoneLogin = async ({ phone, otp, name }) => {
+    setBookings([])
+    const res = await apiFetch('/api/auth/phone', {
+      method: 'POST',
+      body: { phone, otp, name },
+    })
+    if (res.networkError || res.status >= 500) {
+      const digits = phone.replace(/\D/g, '')
+      const offlineSession = {
+        email: `sdt_${digits}@mayan.vn`,
+        name: name || `Khách ${digits.slice(-4)}`,
+        phone,
+        provider: 'phone',
+        at: Date.now(),
+        offline: true,
+      }
+      setSession(offlineSession)
+      setLoginOpen(false)
+      setRegisterOpen(false)
+      notify(`Xin chào ${offlineSession.name}! Xác thực SĐT thành công.`)
+      return null
+    }
+    if (!res.ok) return res.data?.error || 'Xác thực số điện thoại thất bại.'
+    const user = res.data.user
+    const nextSession = { email: user.email, name: user.name, role: user.role, phone, provider: 'phone', at: Date.now() }
+    setSession(nextSession)
+    setLoginOpen(false)
+    setRegisterOpen(false)
+    notify(`Xin chào ${nextSession.name}! Đăng nhập bằng SĐT thành công.`)
+    await migrateLegacyBookings(nextSession.email)
+    await refreshBookings(nextSession.email)
+    return null
+  }
+
   const requireLogin = () => {
     setLoginOpen(true)
     notify('Vui lòng đăng nhập để tiếp tục thanh toán.')
+  }
+
+  const requireLoginForBookings = () => {
+    setLoginOpen(true)
+    notify('Vui lòng đăng nhập để xem đặt chỗ của bạn.')
   }
 
   // Khu vực quản trị dùng bộ khung riêng — KHÔNG trộn menu admin vào giao diện người dùng
@@ -652,12 +763,30 @@ function App() {
         open={loginOpen}
         onClose={() => setLoginOpen(false)}
         onLogin={handleLogin}
+        onSocialLogin={handleSocialLogin}
+        onPhoneLogin={handlePhoneLogin}
+        onSwitchToRegister={() => { setLoginOpen(false); setRegisterOpen(true) }}
       />
       <RegisterModal
         open={registerOpen}
         onClose={() => setRegisterOpen(false)}
         onRegister={handleRegister}
+        onSocialLogin={handleSocialLogin}
+        onSwitchToLogin={() => { setRegisterOpen(false); setLoginOpen(true) }}
       />
+      <TrustInfoModal activeModal={trustModal} onClose={() => setTrustModal(null)} />
+      {reviewModalHotel && (
+        <div className="login-overlay" onClick={() => setReviewModalHotel(null)} role="presentation">
+          <div className="review-modal-dialog" role="dialog" aria-modal="true" aria-label="Đánh giá và phản ánh khách sạn" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="login-close" onClick={() => setReviewModalHotel(null)} aria-label="Đóng">✕</button>
+            <div className="review-modal-hotel-head">
+              <h3>🏨 {reviewModalHotel.name}</h3>
+              <p className="muted">📍 {reviewModalHotel.location} · Điểm {reviewModalHotel.rating}/10</p>
+            </div>
+            <HotelReviews hotelId={reviewModalHotel.id} session={session} compact />
+          </div>
+        </div>
+      )}
 
       <div className="top-strip">
         <div className="container top-strip-inner">
@@ -754,19 +883,112 @@ function App() {
               </div>
             </section>
 
-            <ServiceDock service={service} setService={setService} setPage={setPage} notify={notify} />
-            <TrustSection />
+            <ServiceDock service={service} setService={setService} setPage={setPage} />
+            <TrustSection
+              onOpenSecurity={() => setTrustModal('security')}
+              onOpenSupport={() => setTrustModal('support')}
+              onOpenPromos={() => document.querySelector('#promo-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            />
             <PromoSection promo={promo} setPromo={setPromo} />
             <CollectionSection />
             <DestinationSection />
             <ListingPreview title="Chuyến bay gợi ý hôm nay" type="flight" onChoose={chooseItem} />
-            <ListingPreview title="Khách sạn nổi bật hôm nay" type="hotel" onChoose={openRooms} />
+            <ListingPreview title="Khách sạn nổi bật hôm nay" type="hotel" onChoose={openRooms} onOpenReviews={setReviewModalHotel} />
           </>
         )}
 
-        {page === 'flight' && <FlightPage onChoose={chooseItem} filters={filters} setFilters={setFilters} search={appliedSearch} onClearSearch={() => setAppliedSearch(null)} />}
-        {page === 'hotel' && <HotelPage onChoose={openRooms} filters={filters} setFilters={setFilters} search={appliedSearch} onClearSearch={() => setAppliedSearch(null)} />}
-        {page === 'combo' && <ComboPage onChoose={chooseItem} search={appliedSearch} onClearSearch={() => setAppliedSearch(null)} />}
+        {page === 'flight' && (
+          <FlightBookingMomo
+            flights={catalog.flights}
+            loading={catalogStatus === 'loading'}
+            filters={filters}
+            setFilters={setFilters}
+            dates={dates}
+            setDates={setDates}
+            tripType={tripType}
+            setTripType={setTripType}
+            passengers={passengers}
+            setPassengers={setPassengers}
+            todayISO={todayISO}
+            search={appliedSearch}
+            onClearSearch={() => setAppliedSearch(null)}
+            onChoose={chooseItem}
+          />
+        )}
+        {page === 'hotel' && (
+          <HotelPage
+            onChoose={openRooms}
+            onOpenReviews={setReviewModalHotel}
+            filters={filters}
+            setFilters={setFilters}
+            search={appliedSearch}
+            onClearSearch={() => setAppliedSearch(null)}
+          />
+        )}
+        {page === 'combo' && (
+          <ComboPage
+            onChoose={chooseItem}
+            dates={dates}
+            setDates={setDates}
+            passengers={passengers}
+            setPassengers={setPassengers}
+            search={appliedSearch}
+            onClearSearch={() => setAppliedSearch(null)}
+          />
+        )}
+        {page === 'activity' && (
+          <ActivityPage
+            dates={dates}
+            setDates={setDates}
+            passengers={passengers}
+            setPassengers={setPassengers}
+            todayISO={todayISO}
+            onChoose={chooseItem}
+            onBack={() => setPage('home')}
+          />
+        )}
+        {page === 'car' && (
+          <AirportTransferPage
+            dates={dates}
+            setDates={setDates}
+            todayISO={todayISO}
+            onChoose={chooseItem}
+            onBack={() => setPage('home')}
+          />
+        )}
+        {page === 'bus' && (
+          <BusPage
+            dates={dates}
+            setDates={setDates}
+            passengers={passengers}
+            setPassengers={setPassengers}
+            todayISO={todayISO}
+            onChoose={chooseItem}
+            onBack={() => setPage('home')}
+          />
+        )}
+        {page === 'train' && (
+          <TrainPage
+            dates={dates}
+            setDates={setDates}
+            passengers={passengers}
+            setPassengers={setPassengers}
+            todayISO={todayISO}
+            onChoose={chooseItem}
+            onBack={() => setPage('home')}
+          />
+        )}
+        {page === 'insurance' && (
+          <InsurancePage
+            dates={dates}
+            setDates={setDates}
+            passengers={passengers}
+            setPassengers={setPassengers}
+            todayISO={todayISO}
+            onChoose={chooseItem}
+            onBack={() => setPage('home')}
+          />
+        )}
         {page === 'notfound' && <NotFoundPage onHome={() => setPage('home')} />}
         {page === 'checkout' && (
           <CheckoutPage
@@ -799,6 +1021,7 @@ function App() {
             hotel={selectedHotel}
             rooms={selectedHotelRooms}
             loading={catalogStatus === 'loading'}
+            session={session}
             onBack={() => setPage('hotel')}
             onPick={openRoomCheckout}
           />
@@ -843,22 +1066,37 @@ function App() {
           )
         )}
         {page === 'bookings' && (
-          <BookingsPage
-            bookings={bookings}
-            onCancel={async (code) => {
-              const res = await apiPatch(`/api/bookings/${encodeURIComponent(code)}/cancel`, {})
-              if (!res.ok) {
-                notify(res.networkError ? 'Không kết nối được máy chủ. Thử lại sau.'
-                  : (res.data?.error || 'Không thể hủy đơn hàng.'))
-                return
-              }
-              setBookings((current) => current.map((booking) => (
-                booking.code === code ? { ...booking, status: 'Đã hủy' } : booking
-              )))
-              notify(`Đã hủy đặt chỗ ${code}`)
-            }}
-            onExplore={() => setPage('home')}
-          />
+          session ? (
+            <BookingsPage
+              bookings={bookings}
+              onCancel={async (code) => {
+                const res = await apiPatch(`/api/bookings/${encodeURIComponent(code)}/cancel`, {})
+                if (!res.ok) {
+                  notify(res.networkError ? 'Không kết nối được máy chủ. Thử lại sau.'
+                    : (res.data?.error || 'Không thể hủy đơn hàng.'))
+                  return
+                }
+                setBookings((current) => current.map((booking) => (
+                  booking.code === code ? { ...booking, status: 'Đã hủy' } : booking
+                )))
+                notify(`Đã hủy đặt chỗ ${code}`)
+              }}
+              onExplore={() => setPage('home')}
+            />
+          ) : (
+            <section className="page container bookings-page">
+              <PageHero icon="🧾" title="Đặt chỗ của tôi" text="Theo dõi các đơn vé máy bay, khách sạn và combo đã đặt trên Mây An Nhiên." />
+              <div className="empty-bookings login-required">
+                <span>🔐</span>
+                <h2>Bạn cần đăng nhập</h2>
+                <p>Vui lòng đăng nhập để xem và quản lý các đặt chỗ của bạn.</p>
+                <div className="empty-actions">
+                  <button className="login-required-btn" onClick={requireLoginForBookings}>Đăng nhập ngay</button>
+                  <button onClick={() => setPage('home')}>Về trang chủ</button>
+                </div>
+              </div>
+            </section>
+          )
         )}
       </main>
 
@@ -953,25 +1191,20 @@ function SearchCard({ service, setService, tripType, setTripType, keyword, setKe
   )
 }
 
-function ServiceDock({ service, setService, setPage, notify }) {
-  const availablePages = ['flight', 'hotel', 'combo']
-
+function ServiceDock({ service, setService, setPage }) {
   return (
-    <section className="container service-dock">
+    <section className="container service-dock" aria-label="Danh mục dịch vụ du lịch">
       {services.map((item) => (
         <button
+          type="button"
           key={item.id}
-          className={service === item.id ? 'active' : ''}
+          className={`dock-item ${service === item.id ? 'active' : ''}`}
           onClick={() => {
             setService(item.id)
-            if (availablePages.includes(item.id)) {
-              setPage(item.id)
-            } else {
-              notify(`Tính năng "${item.label}" đang được hoàn thiện. Hiện bạn có thể đặt vé máy bay, khách sạn và combo.`)
-            }
+            setPage(item.id)
           }}
         >
-          <span>{item.icon}</span>
+          <span className="dock-icon">{item.icon}</span>
           <b>{item.label}</b>
         </button>
       ))}
@@ -981,11 +1214,11 @@ function ServiceDock({ service, setService, setPage, notify }) {
 
 const fallbackBenefits = [
   ['🔒', 'Thanh toán bảo mật', 'Mô phỏng nhiều phương thức thanh toán và tóm tắt đơn hàng.'],
-  ['📄', 'Quản lý đặt chỗ', 'Người dùng có thể xem dịch vụ đã chọn và thông tin khách hàng.'],
-  ['🎯', 'Tìm kiếm nhanh', 'Tabs, bộ lọc, nhập điểm đến, ngày đi và số khách.'],
+  ['🛎️', 'Hỗ trợ 24/7', 'Nhân viên hỗ trợ bạn mọi lúc để giải đáp và xử lý mọi nhu cầu.'],
+  ['🎁', 'Quà tặng & ưu đãi', 'Nhiều mã giảm giá và ưu đãi độc quyền dành cho khách hàng thân thiết.'],
 ]
 
-function TrustSection() {
+function TrustSection({ onOpenSecurity, onOpenSupport, onOpenPromos }) {
   const [items, setItems] = useState(fallbackBenefits)
   const [status, setStatus] = useState('loading')
   const [nonce, setNonce] = useState(0)
@@ -1021,6 +1254,13 @@ function TrustSection() {
     )
   }
 
+  const handleCardClick = (index, title) => {
+    const lower = String(title || '').toLowerCase()
+    if (lower.includes('hỗ trợ') || index === 1) onOpenSupport?.()
+    else if (lower.includes('quà') || lower.includes('ưu đãi') || index === 2) onOpenPromos?.()
+    else onOpenSecurity?.()
+  }
+
   return (
     <section className="container trust-section">
       {status === 'error' && (
@@ -1029,14 +1269,19 @@ function TrustSection() {
           <button onClick={() => { setStatus('loading'); setNonce((value) => value + 1) }}>Thử lại</button>
         </div>
       )}
-      {items.map(([icon, title, text]) => (
-        <article key={title}>
+      {items.map(([icon, title, text], index) => (
+        <button
+          type="button"
+          key={title}
+          className="trust-card-btn"
+          onClick={() => handleCardClick(index, title)}
+        >
           <span>{icon}</span>
           <div>
             <h3>{title}</h3>
             <p>{text}</p>
           </div>
-        </article>
+        </button>
       ))}
     </section>
   )
@@ -1046,7 +1291,7 @@ function PromoSection({ promo, setPromo }) {
   const { catalog } = useContext(CatalogCtx)
 
   return (
-    <section className="container section-block">
+    <section id="promo-section" className="container section-block">
       <div className="section-title">
         <div>
           <span>Ưu đãi</span>
@@ -1119,7 +1364,7 @@ function DestinationSection() {
   )
 }
 
-function ListingPreview({ title, type, onChoose }) {
+function ListingPreview({ title, type, onChoose, onOpenReviews }) {
   const { catalog, catalogStatus } = useContext(CatalogCtx)
   const list = type === 'flight' ? catalog.flights : catalog.hotels
   return (
@@ -1133,7 +1378,11 @@ function ListingPreview({ title, type, onChoose }) {
       <div className={type === 'flight' ? 'flight-list' : 'hotel-grid'}>
         {catalogStatus === 'loading'
           ? <SkeletonList count={2} />
-          : list.map((item) => type === 'flight' ? <FlightCard key={item.id} flight={item} onChoose={onChoose} /> : <HotelCard key={item.id} hotel={item} onChoose={onChoose} />)}
+          : list.map((item) => (
+            type === 'flight'
+              ? <FlightCard key={item.id} flight={item} onChoose={onChoose} />
+              : <HotelCard key={item.id} hotel={item} onChoose={onChoose} onOpenReviews={onOpenReviews} />
+          ))}
       </div>
     </section>
   )
@@ -1160,37 +1409,7 @@ function ResultsCount({ count, unit }) {
   return <p className="results-count">{count} {unit} phù hợp với yêu cầu của bạn</p>
 }
 
-function FlightPage({ onChoose, filters, setFilters, search, onClearSearch }) {
-  const { catalog, catalogStatus } = useContext(CatalogCtx)
-  const keyword = (search?.keyword || '').trim().toLowerCase()
-  const filteredFlights = catalog.flights.filter((flight) => (
-    flight.price <= filters.maxPrice
-    && (!filters.promoOnly || flight.hasPromo)
-    && (!keyword || `${flight.from} ${flight.to} ${flight.airline}`.toLowerCase().includes(keyword))
-  ))
-
-  return (
-    <section className="page container">
-      <PageHero icon="✈️" title="Tìm vé máy bay giá tốt" text="So sánh chuyến bay, giờ bay, hãng bay và chọn vé phù hợp." />
-      <SearchSummary search={search} onClear={onClearSearch} />
-      <div className="content-layout">
-        <FilterPanel filters={filters} setFilters={setFilters} />
-        <div className="flight-list">
-          {catalogStatus === 'loading' ? (
-            <SkeletonList count={3} />
-          ) : (
-            <>
-              <ResultsCount count={filteredFlights.length} unit="chuyến bay" />
-              {filteredFlights.length > 0 ? filteredFlights.map((flight) => <FlightCard key={flight.id} flight={flight} onChoose={onChoose} />) : <EmptyResult text="Không có chuyến bay phù hợp. Hãy đổi điểm đến hoặc gỡ bộ lọc." />}
-            </>
-          )}
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function HotelPage({ onChoose, filters, setFilters, search, onClearSearch }) {
+function HotelPage({ onChoose, onOpenReviews, filters, setFilters, search, onClearSearch }) {
   const { catalog, catalogStatus } = useContext(CatalogCtx)
   const keyword = (search?.keyword || '').trim().toLowerCase()
   const filteredHotels = catalog.hotels.filter((hotel) => (
@@ -1204,7 +1423,7 @@ function HotelPage({ onChoose, filters, setFilters, search, onClearSearch }) {
 
   return (
     <section className="page container">
-      <PageHero icon="🏨" title="Khách sạn và resort nổi bật" text="Chọn phòng, xem tiện ích, đánh giá và đặt chỗ trực tuyến." />
+      <PageHero icon="🏨" title="Khách sạn và resort nổi bật" text="Chọn phòng, xem tiện ích, đánh giá & phản ánh từ khách và đặt chỗ trực tuyến." />
       <SearchSummary search={search} onClear={onClearSearch} />
       <div className="content-layout">
         <FilterPanel filters={filters} setFilters={setFilters} />
@@ -1214,7 +1433,15 @@ function HotelPage({ onChoose, filters, setFilters, search, onClearSearch }) {
           ) : (
             <>
               <ResultsCount count={filteredHotels.length} unit="khách sạn" />
-              {filteredHotels.length > 0 ? filteredHotels.map((hotel) => <HotelCard key={hotel.id} hotel={hotel} onChoose={onChoose} chooseLabel="Chọn phòng" />) : <EmptyResult text="Không có khách sạn phù hợp. Hãy thử từ khóa khác hoặc gỡ bộ lọc." />}
+              {filteredHotels.length > 0 ? filteredHotels.map((hotel) => (
+                <HotelCard
+                  key={hotel.id}
+                  hotel={hotel}
+                  onChoose={onChoose}
+                  onOpenReviews={onOpenReviews}
+                  chooseLabel="Chọn phòng"
+                />
+              )) : <EmptyResult text="Không có khách sạn phù hợp. Hãy thử từ khóa khác hoặc gỡ bộ lọc." />}
             </>
           )}
         </div>
@@ -1223,28 +1450,240 @@ function HotelPage({ onChoose, filters, setFilters, search, onClearSearch }) {
   )
 }
 
-function ComboPage({ onChoose, search, onClearSearch }) {
+function ComboPage({ onChoose, dates, setDates, passengers, setPassengers, search, onClearSearch }) {
   const { catalog, catalogStatus } = useContext(CatalogCtx)
   const keyword = (search?.keyword || '').trim().toLowerCase()
+  const [customizingCombo, setCustomizingCombo] = useState(null)
+  const [pickedHotelId, setPickedHotelId] = useState('')
+  const [pickedRoomId, setPickedRoomId] = useState('')
+  const [pickedFlightId, setPickedFlightId] = useState('')
+  const [pickedSeatClass, setPickedSeatClass] = useState('eco')
+  const [pickedSeat, setPickedSeat] = useState('3B')
+
+  const roomsList = (Array.isArray(catalog.rooms) && catalog.rooms.length > 0) ? catalog.rooms : localRooms
+
   // Combo lấy từ database (admin quản lý); API chưa có -> tự suy ra như bản cũ
   const combos = (Array.isArray(catalog.combos) ? catalog.combos : catalog.hotels
-    .map((hotel, index) => ({ ...hotel, id: `combo-${hotel.id}`, price: hotel.price + (catalog.flights[index]?.price || 0) - 450000, name: `Combo ${hotel.name} + vé bay` })))
+    .map((hotel, index) => ({
+      ...hotel,
+      id: `combo-${hotel.id}`,
+      hotelId: hotel.id,
+      flightId: catalog.flights[index]?.id || catalog.flights[0]?.id,
+      price: hotel.price + (catalog.flights[index]?.price || 0) - 450000,
+      name: `Combo ${hotel.name} + vé bay`,
+    })))
     .filter((combo) => !keyword || `${combo.name} ${combo.location}`.toLowerCase().includes(keyword))
+
+  const openCustomizer = (combo) => {
+    const defaultHId = combo.hotelId || catalog.hotels[0]?.id || ''
+    const hotelRooms = roomsList.filter((r) => r.hotelId === defaultHId)
+    const defaultFId = combo.flightId || catalog.flights[0]?.id || ''
+    setPickedHotelId(defaultHId)
+    setPickedRoomId(hotelRooms[0]?.id || '')
+    setPickedFlightId(defaultFId)
+    setPickedSeatClass('eco')
+    setPickedSeat('3B')
+    setCustomizingCombo(combo)
+  }
+
+  const handleHotelChange = (nextHotelId) => {
+    setPickedHotelId(nextHotelId)
+    const nextRooms = roomsList.filter((r) => r.hotelId === nextHotelId)
+    setPickedRoomId(nextRooms[0]?.id || '')
+  }
+
+  const confirmCombo = () => {
+    if (!customizingCombo) return
+    const h = catalog.hotels.find((x) => x.id === pickedHotelId)
+    const r = roomsList.find((x) => x.id === pickedRoomId)
+    const f = catalog.flights.find((x) => x.id === pickedFlightId)
+    const cls = SEAT_CLASSES.find((c) => c.id === pickedSeatClass) || SEAT_CLASSES[0]
+    onChoose({
+      ...customizingCombo,
+      selectedMeta: {
+        departDate: dates.depart,
+        returnDate: dates.ret,
+        hotelName: h?.name || customizingCombo.name,
+        roomName: r?.name || 'Phòng tiêu chuẩn',
+        flightInfo: f ? `${f.airline} (${f.from} → ${f.to}, ${f.depart})` : '',
+        seat: pickedSeat,
+        seatClass: cls.label,
+      },
+    })
+    setCustomizingCombo(null)
+  }
+
+  const nights = nightsBetween(dates.depart, dates.ret)
+  const activeHotelRooms = roomsList.filter((r) => r.hotelId === pickedHotelId)
 
   return (
     <section className="page container">
-      <PageHero icon="💙" title="Combo bay + khách sạn" text="Gói tiết kiệm cho chuyến đi trọn vẹn, có thể đặt ngay." />
+      <PageHero icon="💙" title="Combo bay + khách sạn" text="Chọn ngày tháng năm, khách sạn, loại phòng và chỗ ngồi máy bay trong một gói tiết kiệm." />
       <SearchSummary search={search} onClear={onClearSearch} />
+
+      <div className="combo-date-picker">
+        <h3>🗓️ Chọn ngày tháng năm & số khách cho Combo</h3>
+        <div className="combo-date-grid">
+          <label className="field">
+            <span>Ngày đi / Nhận phòng (ngày/tháng/năm)</span>
+            <input
+              type="date"
+              value={dates.depart}
+              min={todayISO}
+              onChange={(e) => setDates({ ...dates, depart: e.target.value })}
+            />
+          </label>
+          <label className="field">
+            <span>Ngày về / Trả phòng (ngày/tháng/năm)</span>
+            <input
+              type="date"
+              value={dates.ret}
+              min={dates.depart || todayISO}
+              onChange={(e) => setDates({ ...dates, ret: e.target.value })}
+            />
+          </label>
+          <label className="field">
+            <span>Số hành khách</span>
+            <select value={passengers} onChange={(e) => setPassengers(Number(e.target.value))}>
+              {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n} khách</option>)}
+            </select>
+          </label>
+        </div>
+        {dates.depart && dates.ret && nights >= 1 ? (
+          <p className="combo-date-summary">
+            📅 Lịch trình: <b>{formatDateVN(dates.depart)}</b> → <b>{formatDateVN(dates.ret)}</b> · {nights} đêm · {passengers} khách
+          </p>
+        ) : (
+          <p className="combo-date-warning">⚠ Ngày về phải sau ngày đi ít nhất 1 đêm.</p>
+        )}
+      </div>
+
       <div className="hotel-grid page-grid">
         {catalogStatus === 'loading' ? (
           <SkeletonList count={3} />
         ) : (
           <>
             <ResultsCount count={combos.length} unit="combo" />
-            {combos.length > 0 ? combos.map((combo) => <HotelCard key={combo.id} hotel={combo} onChoose={onChoose} />) : <EmptyResult text="Không có combo phù hợp với từ khóa hiện tại." />}
+            {combos.length > 0 ? combos.map((combo) => (
+              <HotelCard
+                key={combo.id}
+                hotel={combo}
+                onChoose={openCustomizer}
+                chooseLabel="Chọn ngày, KS & ghế"
+              />
+            )) : <EmptyResult text="Không có combo phù hợp với từ khóa hiện tại." />}
           </>
         )}
       </div>
+
+      {/* Modal chọn ngày tháng năm, khách sạn/phòng & chỗ ngồi cho Combo */}
+      {customizingCombo && (
+        <div className="login-overlay" onClick={() => setCustomizingCombo(null)} role="presentation">
+          <div className="momo-seat-modal" role="dialog" aria-modal="true" aria-label="Tùy chỉnh Combo khách sạn và chỗ ngồi" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="login-close" onClick={() => setCustomizingCombo(null)} aria-label="Đóng">✕</button>
+            <h3>💙 Tùy chỉnh {customizingCombo.name}</h3>
+            <p className="muted">Chọn đầy đủ ngày tháng năm, khách sạn / phòng lưu trú và chỗ ngồi chuyến bay.</p>
+
+            <div className="momo-modal-section">
+              <h4>1. Ngày tháng năm đi & về</h4>
+              <div className="combo-date-grid">
+                <label className="momo-field">
+                  <span>📅 Ngày đi (nhận phòng)</span>
+                  <input type="date" value={dates.depart} min={todayISO} onChange={(e) => setDates({ ...dates, depart: e.target.value })} />
+                </label>
+                <label className="momo-field">
+                  <span>📅 Ngày về (trả phòng)</span>
+                  <input type="date" value={dates.ret} min={dates.depart || todayISO} onChange={(e) => setDates({ ...dates, ret: e.target.value })} />
+                </label>
+                <label className="momo-field">
+                  <span>👥 Số khách</span>
+                  <select value={passengers} onChange={(e) => setPassengers(Number(e.target.value))}>
+                    {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n} khách</option>)}
+                  </select>
+                </label>
+              </div>
+              <small className="combo-inline-date">
+                Lịch đã chọn: <b>{formatDateVN(dates.depart)}</b> → <b>{formatDateVN(dates.ret)}</b> ({Math.max(nights, 1)} đêm)
+              </small>
+            </div>
+
+            <div className="momo-modal-section">
+              <h4>2. Chọn khách sạn & loại phòng</h4>
+              <div className="combo-two-col">
+                <label className="momo-field">
+                  <span>🏨 Khách sạn / Resort</span>
+                  <select value={pickedHotelId} onChange={(e) => handleHotelChange(e.target.value)}>
+                    {catalog.hotels.map((h) => (
+                      <option key={h.id} value={h.id}>{h.name} ({h.location})</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="momo-field">
+                  <span>🛏️ Loại phòng</span>
+                  <select value={pickedRoomId} onChange={(e) => setPickedRoomId(e.target.value)}>
+                    {activeHotelRooms.length > 0 ? activeHotelRooms.map((r) => (
+                      <option key={r.id} value={r.id}>{r.name} · {r.bedType}</option>
+                    )) : <option value="">Phòng tiêu chuẩn</option>}
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div className="momo-modal-section">
+              <h4>3. Chọn chuyến bay & chỗ ngồi (Ghế: <span className="seat-highlight">{pickedSeat}</span>)</h4>
+              <div className="combo-two-col" style={{ marginBottom: 12 }}>
+                <label className="momo-field">
+                  <span>✈️ Chuyến bay</span>
+                  <select value={pickedFlightId} onChange={(e) => setPickedFlightId(e.target.value)}>
+                    {catalog.flights.map((f) => (
+                      <option key={f.id} value={f.id}>{f.airline} ({f.from} → {f.to}) · {f.depart}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="momo-field">
+                  <span>💺 Hạng ghế</span>
+                  <select value={pickedSeatClass} onChange={(e) => setPickedSeatClass(e.target.value)}>
+                    {SEAT_CLASSES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="cabin-map compact">
+                {FLIGHT_SEAT_ROWS.slice(0, 4).map((row) => (
+                  <div className="cabin-row" key={row}>
+                    <span className="cabin-row-num">{row}</span>
+                    {FLIGHT_SEAT_COLS.map((col, idx) => {
+                      const code = `${row}${col}`
+                      const taken = OCCUPIED_FLIGHT_SEATS.has(code)
+                      return (
+                        <span key={code} className={idx === 3 ? 'aisle-gap' : ''}>
+                          <button
+                            type="button"
+                            disabled={taken}
+                            className={`seat-btn ${taken ? 'taken' : pickedSeat === code ? 'chosen' : 'free'}`}
+                            onClick={() => setPickedSeat(code)}
+                          >
+                            {code}
+                          </button>
+                        </span>
+                      )
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="momo-modal-foot">
+              <div>
+                <small>Trọn gói Combo · {formatDateVN(dates.depart)} → {formatDateVN(dates.ret)} · Ghế {pickedSeat}</small>
+                <strong>{formatCurrency(customizingCombo.price)}</strong>
+              </div>
+              <button type="button" className="pay-btn" onClick={confirmCombo} disabled={nights < 1}>
+                Đặt combo ngay →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }
@@ -1312,14 +1751,26 @@ function FlightCard({ flight, onChoose }) {
   )
 }
 
-function HotelCard({ hotel, onChoose, chooseLabel = 'Đặt ngay' }) {
+function HotelCard({ hotel, onChoose, onOpenReviews, chooseLabel = 'Đặt ngay' }) {
   return (
     <article className="hotel-card">
       <div className="hotel-image" style={{ backgroundImage: hotel.image }}>
         <span>{'★'.repeat(hotel.stars)}</span>
       </div>
       <div className="hotel-body">
-        <div className="rating-row"><b>{hotel.rating}</b><span>Tuyệt vời</span></div>
+        <div className="rating-row">
+          <b>{hotel.rating}</b>
+          <span>Tuyệt vời</span>
+          {onOpenReviews && (
+            <button
+              type="button"
+              className="hotel-review-pill"
+              onClick={() => onOpenReviews(hotel)}
+            >
+              💬 Đánh giá & Phản ánh
+            </button>
+          )}
+        </div>
         <h3>{hotel.name}</h3>
         <p>{hotel.location}</p>
         <div className="perk-row">
@@ -1368,16 +1819,18 @@ function CheckoutPage({ selectedItem, promo, setPromo, selectedPrice, passengers
   }
 
   const item = selectedItem
-  const isFlight = Boolean(item.airline)
-  const isCombo = item.id?.startsWith('combo')
-  const basePrice = item.price * (isFlight ? passengers : 1)
-  const finalPrice = (selectedPrice || item.price) * (isFlight ? passengers : 1)
+  const serviceType = getServiceTypeOfItem(item)
+  const isFlight = serviceType === 'flight'
+  const isPerPassenger = ['flight', 'activity', 'bus', 'train', 'insurance'].includes(serviceType)
+  const basePrice = item.price * (isPerPassenger ? passengers : 1)
+  const finalPrice = (selectedPrice || item.price) * (isPerPassenger ? passengers : 1)
   const discount = Math.max(basePrice - finalPrice, 0)
   const promoRate = getPromoRate(promo, item)
   const promoApplicable = promoRate > 0
   const methodLabel = PAYMENT_METHODS.find((entry) => entry.id === method)?.label || PAYMENT_METHODS[0].label
-  const serviceName = isFlight ? 'Vé máy bay' : isCombo ? 'Combo du lịch' : 'Khách sạn'
-  const dateLabel = isFlight ? ['Ngày bay', 'Giờ đến dự kiến'] : ['Nhận phòng', 'Trả phòng']
+  const serviceName = SERVICE_LABELS[serviceType] || 'Dịch vụ du lịch'
+  const dateLabel = isFlight ? ['Ngày bay', 'Ngày về'] : ['Ngày bắt đầu', 'Ngày kết thúc']
+  const meta = item.selectedMeta || null
 
   const handlePayment = () => {
     if (paying || payingRef.current) return
@@ -1418,7 +1871,7 @@ function CheckoutPage({ selectedItem, promo, setPromo, selectedPrice, passengers
       const res = await apiFetch('/api/bookings', {
         method: 'POST',
         body: {
-          serviceType: isFlight ? 'flight' : isCombo ? 'combo' : 'hotel',
+          serviceType,
           itemId: item.id,
           passengers,
           traveler: {
@@ -1497,18 +1950,7 @@ function CheckoutPage({ selectedItem, promo, setPromo, selectedPrice, passengers
 
         <div className="traveler-card">
           <h3>Phương thức thanh toán</h3>
-          <div className="pay-methods">
-            {PAYMENT_METHODS.map((entry) => (
-              <button
-                type="button"
-                key={entry.id}
-                className={method === entry.id ? 'active' : ''}
-                onClick={() => setMethod(entry.id)}
-              >
-                {entry.label}
-              </button>
-            ))}
-          </div>
+          <PaymentMethodSelector method={method} setMethod={setMethod} />
         </div>
       </div>
 
@@ -1519,6 +1961,11 @@ function CheckoutPage({ selectedItem, promo, setPromo, selectedPrice, passengers
           <b>{serviceName}</b>
         </div>
         <div className="summary-name">{item.name || `${item.airline} ${item.from} - ${item.to}`}</div>
+        {meta?.seat && <div className="summary-item"><span>Chỗ ngồi</span><b>Ghế {meta.seat}{meta.seatClass ? ` · ${meta.seatClass}` : ''}</b></div>}
+        {meta?.roomName && <div className="summary-item"><span>Phòng đã chọn</span><b>{meta.roomName}</b></div>}
+        {meta?.flightInfo && <div className="summary-item"><span>Chuyến bay</span><b>{meta.flightInfo}</b></div>}
+        {meta?.coach && <div className="summary-item"><span>Toa ưu tiên</span><b>{meta.coach}</b></div>}
+        {meta?.pickupTime && <div className="summary-item"><span>Đón/Tiễn</span><b>{meta.direction} · {meta.pickupTime}</b></div>}
         <div className="summary-item"><span>Giá gốc</span><b>{formatCurrency(basePrice)}</b></div>
         <div className="summary-item"><span>Mã áp dụng</span><b>{promo.title}</b></div>
         {!promoApplicable && (
@@ -1597,8 +2044,239 @@ function AmenityGroups({ amenities }) {
   )
 }
 
+// Dữ liệu đánh giá & phản ánh mẫu cho khách sạn (kết hợp lưu localStorage theo từng khách sạn)
+const REVIEWS_STORAGE_KEY = 'may-an-nhien-reviews:v1'
+const FEEDBACK_CATEGORIES = ['Phòng ốc', 'Vệ sinh', 'Dịch vụ / Nhân viên', 'Tiện nghi / Wi-Fi', 'Khác']
+
+const sampleReviews = {
+  'hotel-1': [
+    { id: 'r1', type: 'review', name: 'Minh Tuấn', rating: 5, text: 'Resort tuyệt vời! View biển Mỹ Khê đẹp quá. Nhân viên phục vụ rất tận tình. Sẽ quay lại lần sau.', date: '2026-11-10' },
+    { id: 'r2', type: 'feedback', category: 'Tiện nghi / Wi-Fi', name: 'Thu Hà', rating: 4, text: 'Phòng sạch sẽ, bữa sáng buffet đa dạng. Hồ bơi rất đẹp. Phản ánh nhỏ: wifi ở tầng 8 buổi tối hơi chậm, mong resort cải thiện.', date: '2026-11-05' },
+    { id: 'r3', type: 'review', name: 'Quốc Bảo', rating: 5, text: 'Đáng giá từng đồng! Dịch vụ spa rất chuyên nghiệp, phòng rộng rãi và thoáng mát.', date: '2026-10-28' },
+  ],
+  'hotel-2': [
+    { id: 'r4', type: 'review', name: 'Hương Giang', rating: 5, text: 'Sa Pa mùa này đẹp lắm! Khách sạn nằm ngay trung tâm, đi chợ rất tiện. View núi từ phòng rất ấn tượng.', date: '2026-11-08' },
+    { id: 'r5', type: 'feedback', category: 'Phòng ốc', name: 'Đức Anh', rating: 4, text: 'Phòng ấm cúng, nhân viên thân thiện. Bữa sáng ngon. Góp ý: cách âm cửa sổ cuối tuần hơi ồn một chút.', date: '2026-10-30' },
+  ],
+  'hotel-3': [
+    { id: 'r6', type: 'review', name: 'Thanh Nga', rating: 5, text: 'Vị trí tuyệt vời ngay phố cổ! Đi bộ 5 phút ra Hồ Gươm. Phòng family rất rộng, phù hợp gia đình.', date: '2026-11-12' },
+    { id: 'r7', type: 'review', name: 'Văn Long', rating: 4, text: 'Check-in nhanh, phòng sạch sẽ. Ăn sáng phong phú kiểu Việt Nam. Rất hài lòng!', date: '2026-11-01' },
+  ],
+}
+
+const loadHotelReviews = (hotelId) => {
+  const base = sampleReviews[hotelId] || []
+  try {
+    const all = JSON.parse(localStorage.getItem(REVIEWS_STORAGE_KEY)) || {}
+    const custom = Array.isArray(all[hotelId]) ? all[hotelId] : []
+    return [...custom, ...base]
+  } catch {
+    return base
+  }
+}
+
+const saveHotelReview = (hotelId, entry) => {
+  try {
+    const all = JSON.parse(localStorage.getItem(REVIEWS_STORAGE_KEY)) || {}
+    const prev = Array.isArray(all[hotelId]) ? all[hotelId] : []
+    all[hotelId] = [entry, ...prev].slice(0, 50)
+    localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(all))
+  } catch {
+    // bỏ qua nếu bộ nhớ đầy
+  }
+}
+
+function HotelReviews({ hotelId, session, compact = false }) {
+  const [reviews, setReviews] = useState(() => loadHotelReviews(hotelId))
+  const [filterTab, setFilterTab] = useState('all') // all | review | feedback | 5star
+  const [mode, setMode] = useState('review') // review | feedback
+  const [category, setCategory] = useState(FEEDBACK_CATEGORIES[0])
+  const [name, setName] = useState(session?.name || '')
+  const [rating, setRating] = useState(5)
+  const [text, setText] = useState('')
+  const [hoverRating, setHoverRating] = useState(0)
+  const [submittedMsg, setSubmittedMsg] = useState('')
+
+  useEffect(() => {
+    setReviews(loadHotelReviews(hotelId))
+  }, [hotelId])
+
+  useEffect(() => {
+    if (session?.name && !name) setName(session.name)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.name])
+
+  const avgRating = reviews.length > 0
+    ? (reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length).toFixed(1)
+    : '—'
+
+  const filteredReviews = reviews.filter((r) => {
+    if (filterTab === 'review') return r.type !== 'feedback'
+    if (filterTab === 'feedback') return r.type === 'feedback'
+    if (filterTab === '5star') return r.rating === 5
+    return true
+  })
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!name.trim() || !text.trim()) return
+    const newReview = {
+      id: `user-${Date.now()}`,
+      type: mode,
+      category: mode === 'feedback' ? category : undefined,
+      name: name.trim(),
+      rating,
+      text: text.trim(),
+      date: todayISO,
+    }
+    saveHotelReview(hotelId, newReview)
+    setReviews((prev) => [newReview, ...prev])
+    setText('')
+    setRating(5)
+    setSubmittedMsg(mode === 'feedback'
+      ? '✅ Phản ánh của bạn đã được ghi nhận và chuyển tới bộ phận CSKH khách sạn!'
+      : '✅ Cảm ơn bạn đã gửi bình luận & đánh giá!')
+    window.setTimeout(() => setSubmittedMsg(''), 3500)
+  }
+
+  return (
+    <div className={`hotel-reviews ${compact ? 'compact' : ''}`}>
+      <div className="reviews-header">
+        <div>
+          <h2>💬 Đánh giá & Phản ánh từ khách hàng</h2>
+          <p className="muted">Chia sẻ trải nghiệm lưu trú hoặc gửi phản ánh để khách sạn nâng cao chất lượng.</p>
+        </div>
+        <div className="reviews-summary">
+          <span className="reviews-avg">{avgRating}</span>
+          <div>
+            <span className="reviews-stars">{'★'.repeat(Math.round(Number(avgRating) || 0))}</span>
+            <small>{reviews.length} lượt đánh giá & phản ánh</small>
+          </div>
+        </div>
+      </div>
+
+      <div className="reviews-filter-bar">
+        {[
+          ['all', `Tất cả (${reviews.length})`],
+          ['review', `⭐ Bình luận (${reviews.filter((r) => r.type !== 'feedback').length})`],
+          ['feedback', `📢 Phản ánh (${reviews.filter((r) => r.type === 'feedback').length})`],
+          ['5star', '5 sao'],
+        ].map(([id, label]) => (
+          <button
+            type="button"
+            key={id}
+            className={`momo-filter-chip ${filterTab === id ? 'active' : ''}`}
+            onClick={() => setFilterTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="reviews-list">
+        {filteredReviews.map((review) => (
+          <article key={review.id} className={`review-card ${review.type === 'feedback' ? 'is-feedback' : ''}`}>
+            <div className="review-top">
+              <div className="review-avatar">{review.name.charAt(0).toUpperCase()}</div>
+              <div className="review-top-info">
+                <div className="review-name-row">
+                  <b>{review.name}</b>
+                  {review.type === 'feedback' ? (
+                    <span className="review-type-badge feedback">📢 Phản ánh · {review.category || 'Dịch vụ'}</span>
+                  ) : (
+                    <span className="review-type-badge verified">✓ Đánh giá lưu trú</span>
+                  )}
+                </div>
+                <div className="review-meta">
+                  <span className="review-stars">{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</span>
+                  <small>{formatDateVN(review.date)}</small>
+                </div>
+              </div>
+            </div>
+            <p>{review.text}</p>
+            {review.type === 'feedback' && (
+              <div className="feedback-reply-note">🛎️ Bộ phận CSKH Mây An Nhiên đã tiếp nhận phản ánh này.</div>
+            )}
+          </article>
+        ))}
+        {filteredReviews.length === 0 && <p className="muted">Chưa có mục nào trong bộ lọc này. Hãy chia sẻ ý kiến của bạn bên dưới!</p>}
+      </div>
+
+      <form className="review-form" onSubmit={handleSubmit}>
+        <div className="review-mode-tabs">
+          <button
+            type="button"
+            className={`momo-pill-btn ${mode === 'review' ? 'active' : ''}`}
+            onClick={() => setMode('review')}
+          >
+            ⭐ Viết bình luận / Đánh giá
+          </button>
+          <button
+            type="button"
+            className={`momo-pill-btn ${mode === 'feedback' ? 'active' : ''}`}
+            onClick={() => setMode('feedback')}
+          >
+            📢 Gửi phản ánh / Góp ý
+          </button>
+        </div>
+
+        {submittedMsg && <p className="review-success" role="status">{submittedMsg}</p>}
+        <div className="review-form-fields">
+          <div className="review-form-row">
+            <label className="field">
+              <span>Tên của bạn</span>
+              <input value={name} maxLength={40} placeholder="VD: Nguyễn Văn A" onChange={(e) => setName(e.target.value)} />
+            </label>
+            {mode === 'feedback' && (
+              <label className="field">
+                <span>Hạng mục phản ánh</span>
+                <select value={category} onChange={(e) => setCategory(e.target.value)}>
+                  {FEEDBACK_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </label>
+            )}
+          </div>
+          <div className="review-rating-input">
+            <span>Mức hài lòng:</span>
+            <div className="star-selector">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  type="button"
+                  key={star}
+                  className={star <= (hoverRating || rating) ? 'star active' : 'star'}
+                  onClick={() => setRating(star)}
+                  onMouseEnter={() => setHoverRating(star)}
+                  onMouseLeave={() => setHoverRating(0)}
+                  aria-label={`${star} sao`}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="field wide">
+            <span>{mode === 'feedback' ? 'Nội dung phản ánh / góp ý' : 'Nội dung bình luận'}</span>
+            <textarea
+              value={text}
+              maxLength={500}
+              rows={3}
+              placeholder={mode === 'feedback'
+                ? 'Mô tả vấn đề bạn gặp phải để khách sạn xử lý kịp thời...'
+                : 'Chia sẻ trải nghiệm của bạn về phòng, dịch vụ, vị trí...'}
+              onChange={(e) => setText(e.target.value)}
+            />
+          </label>
+        </div>
+        <button type="submit" className="review-submit" disabled={!name.trim() || !text.trim()}>
+          {mode === 'feedback' ? '📢 Gửi phản ánh ngay' : '⭐ Gửi đánh giá'}
+        </button>
+      </form>
+    </div>
+  )
+}
+
 // Trang chọn phòng: danh sách phòng của khách sạn đã chọn (từ thẻ "Chọn phòng").
-function RoomsPage({ hotel, rooms, loading, onBack, onPick }) {
+function RoomsPage({ hotel, rooms, loading, session, onBack, onPick }) {
   if (!hotel) {
     return (
       <section className="page container rooms-page">
@@ -1672,6 +2350,8 @@ function RoomsPage({ hotel, rooms, loading, onBack, onPick }) {
           ))
         )}
       </div>
+
+      <HotelReviews hotelId={hotel.id} session={session} />
     </section>
   )
 }
@@ -1950,11 +2630,7 @@ function HotelCheckoutPage({ selection, dates, session, traveler, setTraveler, o
 
           <div className="traveler-card">
             <h3>Phương thức thanh toán</h3>
-            <div className="pay-methods">
-              {PAYMENT_METHODS.map((entry) => (
-                <button type="button" key={entry.id} className={method === entry.id ? 'active' : ''} onClick={() => setMethod(entry.id)}>{entry.label}</button>
-              ))}
-            </div>
+            <PaymentMethodSelector method={method} setMethod={setMethod} />
           </div>
         </div>
         <aside className="booking-summary">
@@ -2082,14 +2758,33 @@ function NotFoundPage({ onHome }) {
   )
 }
 
-function LoginModal({ open, onClose, onLogin }) {
+function LoginModal({ open, onClose, onLogin, onSocialLogin, onPhoneLogin, onSwitchToRegister }) {
+  const [authTab, setAuthTab] = useState('email') // email | google | facebook | phone
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [socialEmail, setSocialEmail] = useState('')
+  const [socialName, setSocialName] = useState('')
+  const [phoneInput, setPhoneInput] = useState('')
+  const [otpSent, setOtpSent] = useState(false)
+  const [demoOtp, setDemoOtp] = useState('')
+  const [otpInput, setOtpInput] = useState('')
   const [error, setError] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
 
   if (!open) return null
+
+  const switchTab = (next) => {
+    setAuthTab(next)
+    setError('')
+    if (next === 'google' && !socialEmail) {
+      setSocialEmail('khachhang.google@gmail.com')
+      setSocialName('Người dùng Google')
+    } else if (next === 'facebook' && !socialEmail) {
+      setSocialEmail('khachhang.fb@facebook.com')
+      setSocialName('Người dùng Facebook')
+    }
+  }
 
   const handleSubmit = async (event) => {
     event.preventDefault()
@@ -2119,58 +2814,226 @@ function LoginModal({ open, onClose, onLogin }) {
     }
   }
 
+  const handleSocialSubmit = async (event) => {
+    event.preventDefault()
+    if (busy) return
+    const mail = socialEmail.trim().toLowerCase()
+    if (!EMAIL_RE.test(mail)) {
+      setError('Vui lòng nhập email tài khoản liên kết hợp lệ.')
+      return
+    }
+    setBusy(true)
+    try {
+      const msg = await onSocialLogin({
+        provider: authTab === 'facebook' ? 'facebook' : 'google',
+        email: mail,
+        name: socialName.trim() || mail.split('@')[0],
+      })
+      if (msg) { setError(msg); return }
+      setError('')
+      setAuthTab('email')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleSendOtp = () => {
+    const cleanPhone = phoneInput.replace(/\s+/g, '')
+    if (!PHONE_RE.test(cleanPhone)) {
+      setError('Số điện thoại Việt Nam chưa hợp lệ (VD: 0912345678).')
+      return
+    }
+    const generated = String(Math.floor(100000 + Math.random() * 900000))
+    setDemoOtp(generated)
+    setOtpInput(generated)
+    setOtpSent(true)
+    setError('')
+  }
+
+  const handlePhoneSubmit = async (event) => {
+    event.preventDefault()
+    if (busy) return
+    const cleanPhone = phoneInput.replace(/\s+/g, '')
+    if (!PHONE_RE.test(cleanPhone)) {
+      setError('Số điện thoại không hợp lệ.')
+      return
+    }
+    if (!/^\d{6}$/.test(otpInput.trim())) {
+      setError('Vui lòng nhập đủ 6 chữ số mã OTP.')
+      return
+    }
+    setBusy(true)
+    try {
+      const msg = await onPhoneLogin({ phone: cleanPhone, otp: otpInput.trim(), name: socialName.trim() })
+      if (msg) { setError(msg); return }
+      setError('')
+      setOtpSent(false)
+      setAuthTab('email')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="login-overlay" onClick={onClose} role="presentation">
       <div className="login-modal" role="dialog" aria-modal="true" aria-label="Đăng nhập" onClick={(event) => event.stopPropagation()}>
         <button className="login-close" onClick={onClose} aria-label="Đóng">✕</button>
         <span className="login-logo">✈</span>
         <h2>Đăng nhập Mây An Nhiên</h2>
-        <p className="login-sub">Đăng nhập để đặt vé, khách sạn và theo dõi đơn hàng.</p>
+        <p className="login-sub">Chọn đăng nhập bằng Google, Facebook, Số điện thoại hoặc Email.</p>
 
-        <form onSubmit={handleSubmit} noValidate>
-          <label className="login-field">
-            <span>Email</span>
-            <input
-              type="email"
-              value={email}
-              maxLength={80}
-              autoComplete="email"
-              placeholder="ban@email.com"
-              onChange={(event) => { setEmail(event.target.value); setError('') }}
-            />
-          </label>
-
-          <label className="login-field">
-            <span>Mật khẩu</span>
-            <span className="password-row">
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                maxLength={64}
-                autoComplete="current-password"
-                placeholder="Tối thiểu 6 ký tự"
-                onChange={(event) => { setPassword(event.target.value); setError('') }}
-              />
-              <button type="button" onClick={() => setShowPassword((visible) => !visible)}>
-                {showPassword ? 'Ẩn' : 'Hiện'}
-              </button>
-            </span>
-          </label>
-
-          {error && <p className="login-error" role="alert">{error}</p>}
-
-          <button className="login-submit" type="submit" disabled={busy}>
-            {busy ? 'Đang đăng nhập…' : 'Đăng nhập'}
+        <div className="social-login-section">
+          <button type="button" className={`social-btn google ${authTab === 'google' ? 'active' : ''}`} onClick={() => switchTab('google')}>
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+            Google
           </button>
-        </form>
+          <button type="button" className={`social-btn facebook ${authTab === 'facebook' ? 'active' : ''}`} onClick={() => switchTab('facebook')}>
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#fff" d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+            Facebook
+          </button>
+          <button type="button" className={`social-btn phone ${authTab === 'phone' ? 'active' : ''}`} onClick={() => switchTab('phone')}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+            SĐT / OTP
+          </button>
+        </div>
 
+        {(authTab === 'google' || authTab === 'facebook') && (
+          <form onSubmit={handleSocialSubmit} className="social-inline-form" noValidate>
+            <div className="social-inline-head">
+              <b>{authTab === 'google' ? '🔵 Liên kết tài khoản Google' : '📘 Liên kết tài khoản Facebook'}</b>
+              <button type="button" className="login-link" onClick={() => switchTab('email')}>Dùng Email</button>
+            </div>
+            <label className="login-field">
+              <span>Email {authTab === 'google' ? 'Google' : 'Facebook'}</span>
+              <input
+                type="email"
+                value={socialEmail}
+                maxLength={80}
+                placeholder="ban@gmail.com"
+                onChange={(e) => { setSocialEmail(e.target.value); setError('') }}
+              />
+            </label>
+            <label className="login-field">
+              <span>Tên hiển thị</span>
+              <input
+                type="text"
+                value={socialName}
+                maxLength={60}
+                placeholder="Nguyễn Văn An"
+                onChange={(e) => setSocialName(e.target.value)}
+              />
+            </label>
+            {error && <p className="login-error" role="alert">{error}</p>}
+            <button className="login-submit" type="submit" disabled={busy}>
+              {busy ? 'Đang liên kết…' : `Tiếp tục với ${authTab === 'google' ? 'Google' : 'Facebook'}`}
+            </button>
+          </form>
+        )}
+
+        {authTab === 'phone' && (
+          <form onSubmit={handlePhoneSubmit} className="social-inline-form" noValidate>
+            <div className="social-inline-head">
+              <b>📱 Đăng nhập bằng Số điện thoại</b>
+              <button type="button" className="login-link" onClick={() => switchTab('email')}>Dùng Email</button>
+            </div>
+            <label className="login-field">
+              <span>Số điện thoại</span>
+              <span className="password-row">
+                <input
+                  type="tel"
+                  value={phoneInput}
+                  maxLength={15}
+                  placeholder="0912 345 678"
+                  onChange={(e) => { setPhoneInput(e.target.value); setError('') }}
+                />
+                <button type="button" onClick={handleSendOtp}>
+                  {otpSent ? 'Gửi lại' : 'Gửi OTP'}
+                </button>
+              </span>
+            </label>
+            {otpSent && (
+              <>
+                <p className="otp-demo-hint">📩 Mã OTP xác thực của bạn: <b>{demoOtp}</b></p>
+                <label className="login-field">
+                  <span>Nhập mã OTP (6 chữ số)</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={otpInput}
+                    placeholder="Nhập 6 số OTP"
+                    onChange={(e) => { setOtpInput(e.target.value); setError('') }}
+                  />
+                </label>
+              </>
+            )}
+            {error && <p className="login-error" role="alert">{error}</p>}
+            <button className="login-submit" type="submit" disabled={busy || !otpSent}>
+              {busy ? 'Đang xác thực…' : 'Xác nhận & Đăng nhập'}
+            </button>
+          </form>
+        )}
+
+        {authTab === 'email' && (
+          <>
+            <div className="login-divider">
+              <span>hoặc đăng nhập bằng email</span>
+            </div>
+
+            <form onSubmit={handleSubmit} noValidate>
+              <label className="login-field">
+                <span>Email</span>
+                <input
+                  type="email"
+                  value={email}
+                  maxLength={80}
+                  autoComplete="email"
+                  placeholder="ban@email.com"
+                  onChange={(event) => { setEmail(event.target.value); setError('') }}
+                />
+              </label>
+
+              <label className="login-field">
+                <span>Mật khẩu</span>
+                <span className="password-row">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    maxLength={64}
+                    autoComplete="current-password"
+                    placeholder="Tối thiểu 6 ký tự"
+                    onChange={(event) => { setPassword(event.target.value); setError('') }}
+                  />
+                  <button type="button" onClick={() => setShowPassword((visible) => !visible)}>
+                    {showPassword ? 'Ẩn' : 'Hiện'}
+                  </button>
+                </span>
+              </label>
+
+              {error && <p className="login-error" role="alert">{error}</p>}
+
+              <button className="login-submit" type="submit" disabled={busy}>
+                {busy ? 'Đang đăng nhập…' : 'Đăng nhập'}
+              </button>
+            </form>
+          </>
+        )}
+
+        {onSwitchToRegister && (
+          <p className="login-note">
+            Chưa có tài khoản?{' '}
+            <button type="button" onClick={onSwitchToRegister} className="login-link">
+              Đăng ký ngay
+            </button>
+          </p>
+        )}
         <small className="login-note">Mật khẩu chỉ được gửi tới máy chủ Mây An Nhiên (cùng nguồn gốc) để đối soát và không bao giờ lưu ở trình duyệt.</small>
       </div>
     </div>
   )
 }
 
-function RegisterModal({ open, onClose, onRegister }) {
+function RegisterModal({ open, onClose, onRegister, onSocialLogin, onSwitchToLogin }) {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
@@ -2237,6 +3100,30 @@ function RegisterModal({ open, onClose, onRegister }) {
         <span className="login-logo">📝</span>
         <h2>Đăng ký Mây An Nhiên</h2>
         <p className="login-sub">Tạo tài khoản để đặt vé, khách sạn và theo dõi đơn hàng.</p>
+
+        {onSocialLogin && (
+          <>
+            <div className="social-login-section two-col">
+              <button
+                type="button"
+                className="social-btn google"
+                onClick={() => onSocialLogin({ provider: 'google', email: 'thanhvien.google@gmail.com', name: 'Thành viên Google' })}
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                Google
+              </button>
+              <button
+                type="button"
+                className="social-btn facebook"
+                onClick={() => onSocialLogin({ provider: 'facebook', email: 'thanhvien.fb@facebook.com', name: 'Thành viên Facebook' })}
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#fff" d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                Facebook
+              </button>
+            </div>
+            <div className="login-divider"><span>hoặc tạo tài khoản bằng email</span></div>
+          </>
+        )}
 
         <form onSubmit={handleSubmit} noValidate>
           <label className="login-field">
@@ -2318,7 +3205,7 @@ function RegisterModal({ open, onClose, onRegister }) {
 
         <p className="login-note">
           Đã có tài khoản?{' '}
-          <button type="button" onClick={() => { setRegisterOpen(false); setLoginOpen(true) }} className="login-link">
+          <button type="button" onClick={onSwitchToLogin} className="login-link">
             Đăng nhập ngay
           </button>
         </p>

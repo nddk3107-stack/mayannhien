@@ -1,4 +1,5 @@
 // server/routes-public.js — API công khai: đăng nhập/phiên, catalog, đơn đặt chỗ của người dùng.
+import crypto from 'node:crypto'
 import { Router } from 'express'
 import {
   db, createUser, findUserByEmail, hashPassword, verifyPassword, createSession, deleteSession,
@@ -15,7 +16,46 @@ import { ALLOW_LEGACY_IMPORT, IS_PRODUCTION } from './config.js'
 
 export const publicRouter = Router()
 
-const SERVICE_NAMES = { flight: 'Vé máy bay', hotel: 'Khách sạn', combo: 'Combo du lịch' }
+const SERVICE_NAMES = {
+  flight: 'Vé máy bay',
+  hotel: 'Khách sạn',
+  combo: 'Combo du lịch',
+  activity: 'Vui chơi & Trải nghiệm',
+  car: 'Đưa đón sân bay',
+  bus: 'Xe khách',
+  train: 'Tàu hỏa',
+  insurance: 'Bảo hiểm du lịch',
+}
+
+// Danh mục dịch vụ mở rộng (Vui chơi, Đưa đón sân bay, Xe khách, Tàu hỏa, Bảo hiểm)
+// Server giữ giá gốc để tự tính tiền, không tin giá client gửi lên.
+const EXTRA_SERVICE_ITEMS = {
+  // Vui chơi & trải nghiệm
+  'act-bana': { serviceType: 'activity', title: 'Vé Sun World Bà Nà Hills + Cáp treo', price: 900000 },
+  'act-vinwonders': { serviceType: 'activity', title: 'Vé VinWonders Phú Quốc Trọn Gói', price: 950000 },
+  'act-fansipan': { serviceType: 'activity', title: 'Cáp treo Sun World Fansipan Legend', price: 800000 },
+  'act-hoian': { serviceType: 'activity', title: 'Show Ký Ức Hội An + Công viên Ấn Tượng', price: 600000 },
+  'act-coral': { serviceType: 'activity', title: 'Tour Cano 4 Đảo & Lặn Ngắm San Hô Phú Quốc', price: 750000 },
+  // Đưa đón sân bay
+  'car-sedan4': { serviceType: 'car', title: 'Xe riêng Sedan 4 chỗ (Đưa đón sân bay)', price: 290000 },
+  'car-suv7': { serviceType: 'car', title: 'Xe riêng SUV 7 chỗ (Đưa đón sân bay)', price: 390000 },
+  'car-limo9': { serviceType: 'car', title: 'Limousine VIP 9 chỗ (Đưa đón sân bay)', price: 690000 },
+  'car-van16': { serviceType: 'car', title: 'Xe du lịch 16 chỗ (Đưa đón sân bay)', price: 850000 },
+  // Xe khách
+  'bus-futa-dl': { serviceType: 'bus', title: 'Phương Trang FUTA · TP.HCM - Đà Lạt (Giường nằm)', price: 290000 },
+  'bus-limo-sp': { serviceType: 'bus', title: 'Inter Bus Lines · Hà Nội - Sa Pa (Cabin VIP)', price: 420000 },
+  'bus-tb-nt': { serviceType: 'bus', title: 'Thành Bưởi · TP.HCM - Nha Trang (Limousine)', price: 350000 },
+  'bus-hv-hue': { serviceType: 'bus', title: 'Hải Vân Express · Đà Nẵng - Huế (Ghế VIP)', price: 180000 },
+  // Tàu hỏa
+  'train-se2': { serviceType: 'train', title: 'Tàu SE2 · Ga Sài Gòn - Ga Đà Nẵng (Ngồi mềm ĐH)', price: 720000 },
+  'train-se4': { serviceType: 'train', title: 'Tàu SE4 · Ga Sài Gòn - Ga Đà Nẵng (Giường nằm VIP K4)', price: 1180000 },
+  'train-sp3': { serviceType: 'train', title: 'Tàu SP3 · Ga Hà Nội - Ga Lào Cai (Giường nằm K4)', price: 560000 },
+  'train-se8': { serviceType: 'train', title: 'Tàu SE8 · Ga Hà Nội - Ga Huế (Giường nằm K6)', price: 690000 },
+  // Bảo hiểm du lịch
+  'ins-basic': { serviceType: 'insurance', title: 'Bảo hiểm Du lịch Gói Cơ Bản (Mây An Nhiên Care)', price: 89000 },
+  'ins-standard': { serviceType: 'insurance', title: 'Bảo hiểm Du lịch Gói Tiêu Chuẩn (Phổ biến)', price: 169000 },
+  'ins-vip': { serviceType: 'insurance', title: 'Bảo hiểm Du lịch Gói Toàn Diện VIP', price: 299000 },
+}
 const txt = (v, max, min = 1) => {
   const s = typeof v === 'string' ? v.trim() : ''
   return s.length >= min && s.length <= max ? s : null
@@ -145,6 +185,59 @@ publicRouter.post('/auth/logout', requireAuth, (req, res) => {
   res.json({ ok: true })
 })
 
+// Đăng nhập nhanh qua Google / Facebook (mô phỏng OAuth cho đồ án, tạo phiên thật trong DB)
+publicRouter.post('/auth/social', loginIpLimit, async (req, res) => {
+  const provider = txt(req.body?.provider, 16, 2)?.toLowerCase()
+  const email = txt(req.body?.email, 80, 5)?.toLowerCase()
+  const name = txt(req.body?.name, 60, 2) || email?.split('@')[0]
+  if (!['google', 'facebook'].includes(provider)) return bad(res, 'Nhà cung cấp đăng nhập không hợp lệ.')
+  if (!email || !EMAIL_RE.test(email)) return bad(res, 'Email tài khoản liên kết không hợp lệ.')
+
+  let user = findUserByEmail(email)
+  if (!user) {
+    const randomPw = crypto.randomBytes(16).toString('hex')
+    const passwordHash = await hashPassword(randomPw)
+    user = createUser({ email, name, passwordHash, role: 'user', phone: '' })
+  }
+  if (Number(user.is_active) !== 1) return bad(res, 'Tài khoản đã bị vô hiệu hóa.', 403)
+
+  const { token, expiresAt } = createSession(user.id)
+  setSessionCookie(res, token, SESSION_TTL_MS)
+  res.json({ ok: true, user: publicUser(user), provider, expiresAt })
+})
+
+// Đăng nhập nhanh bằng Số điện thoại + OTP (mô phỏng xác thực OTP, tạo phiên thật trong DB)
+publicRouter.post('/auth/phone', loginIpLimit, async (req, res) => {
+  const rawPhone = typeof req.body?.phone === 'string' ? req.body.phone.replace(/\s+/g, '') : ''
+  const otp = typeof req.body?.otp === 'string' ? req.body.otp.trim() : ''
+  const nameInput = txt(req.body?.name, 60, 2)
+  if (!PHONE_RE.test(rawPhone)) return bad(res, 'Số điện thoại Việt Nam không hợp lệ.')
+  if (!/^\d{6}$/.test(otp)) return bad(res, 'Mã OTP phải gồm 6 chữ số.')
+
+  let user = db.prepare('SELECT * FROM users WHERE phone = ?').get(rawPhone)
+  if (!user) {
+    const digits = rawPhone.replace(/\D/g, '')
+    const fallbackEmail = `sdt_${digits}@mayan.vn`
+    user = findUserByEmail(fallbackEmail)
+    if (!user) {
+      const randomPw = crypto.randomBytes(16).toString('hex')
+      const passwordHash = await hashPassword(randomPw)
+      user = createUser({
+        email: fallbackEmail,
+        name: nameInput || `Khách ${digits.slice(-4)}`,
+        passwordHash,
+        role: 'user',
+        phone: rawPhone,
+      })
+    }
+  }
+  if (Number(user.is_active) !== 1) return bad(res, 'Tài khoản đã bị vô hiệu hóa.', 403)
+
+  const { token, expiresAt } = createSession(user.id)
+  setSessionCookie(res, token, SESSION_TTL_MS)
+  res.json({ ok: true, user: publicUser(user), expiresAt })
+})
+
 
 /* ------------------------------------------------------- bookings (user) */
 // Đơn hàng hiển thị theo cặp (tài khoản, trình duyệt) — khớp hành vi lưu localStorage
@@ -257,6 +350,14 @@ function priceBooking({ serviceType, itemId, passengers, promoCode, room, dates,
     title = row.name
     unitPrice = row.price_override != null ? row.price_override : hotel.price + flight.price - row.saving
     base = unitPrice
+  } else if (['activity', 'car', 'bus', 'train', 'insurance'].includes(serviceType)) {
+    const extraItem = EXTRA_SERVICE_ITEMS[itemId]
+    if (!extraItem || extraItem.serviceType !== serviceType) {
+      return { error: 'Dịch vụ không tồn tại hoặc đã ngừng bán.' }
+    }
+    title = extraItem.title
+    unitPrice = extraItem.price
+    base = serviceType === 'car' ? extraItem.price : extraItem.price * passengers
   } else {
     return { error: 'Loại dịch vụ không hợp lệ.' }
   }
@@ -296,7 +397,7 @@ publicRouter.get('/bookings', requireAuth, (req, res) => {
 // Rate-limit theo (tài khoản + IP): chống spam đơn.
 publicRouter.post('/bookings', requireAuth, rateLimitMiddleware('booking', { windowMs: 60_000, max: 100, keyFn: (req) => `u${req.session?.user?.id ?? 'x'}` }), async (req, res) => {
   const userId = Number(req.session.user.id)
-  const serviceType = txt(req.body?.serviceType, 10, 5)
+  const serviceType = txt(req.body?.serviceType, 16, 3)
   const itemId = txt(req.body?.itemId, 64, 2)
   const passengers = Number(req.body?.passengers ?? 1)
   const travelerName = txt(req.body?.traveler?.name, 60, 2)
@@ -537,7 +638,7 @@ publicRouter.get('/catalog', (req, res) => {
 // Rate-limit: chặn dò mã voucher hàng loạt.
 publicRouter.post('/promos/validate', rateLimitMiddleware('promo-validate', { windowMs: 60_000, max: 30 }), (req, res) => {
   const code = txt(req.body?.code, 24, 2)
-  const serviceType = txt(req.body?.serviceType, 10, 5)
+  const serviceType = txt(req.body?.serviceType, 16, 3)
   const amount = Number(req.body?.amount)
   if (!code) return bad(res, 'Vui lòng nhập mã voucher.')
   if (!serviceType || !SERVICE_NAMES[serviceType]) return bad(res, 'Loại dịch vụ không hợp lệ.')

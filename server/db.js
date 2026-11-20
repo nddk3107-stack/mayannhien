@@ -115,7 +115,7 @@ db.exec(`
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     code            TEXT NOT NULL UNIQUE,
     user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    service_type    TEXT NOT NULL CHECK (service_type IN ('flight','hotel','combo')),
+    service_type    TEXT NOT NULL CHECK (service_type IN ('flight','hotel','combo','activity','car','bus','train','insurance')),
     item_id         TEXT NOT NULL,
     title           TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'Đã xác nhận'
@@ -253,6 +253,67 @@ try {
     }
   } catch (err) {
     console.error('[db] migration thêm cột phone thất bại:', err.message)
+  }
+  // Mở rộng CHECK constraint service_type trên bảng bookings cũ để hỗ trợ thêm 5 dịch vụ mới.
+  try {
+    const schemaRow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='bookings'").get()
+    if (schemaRow?.sql && !schemaRow.sql.includes("'activity'")) {
+      const existingCols = db.prepare('PRAGMA table_info(bookings)').all().map((c) => c.name)
+      const colList = existingCols.join(', ')
+      db.exec('PRAGMA foreign_keys = OFF')
+      db.exec('BEGIN')
+      db.exec(`
+        CREATE TABLE bookings_v2 (
+          id              INTEGER PRIMARY KEY AUTOINCREMENT,
+          code            TEXT NOT NULL UNIQUE,
+          user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+          service_type    TEXT NOT NULL CHECK (service_type IN ('flight','hotel','combo','activity','car','bus','train','insurance')),
+          item_id         TEXT NOT NULL,
+          title           TEXT NOT NULL,
+          status          TEXT NOT NULL DEFAULT 'Đã xác nhận'
+                          CHECK (status IN ('Đã tạo','Chờ thanh toán','Đã thanh toán','Đã xác nhận','Đã hủy')),
+          payment_method  TEXT NOT NULL DEFAULT '',
+          payment_status  TEXT NOT NULL DEFAULT 'simulated'
+                          CHECK (payment_status IN ('pending','simulated','paid','refunded')),
+          traveler_name   TEXT NOT NULL,
+          traveler_phone  TEXT NOT NULL,
+          traveler_email  TEXT NOT NULL,
+          email           TEXT NOT NULL,
+          passengers      INTEGER NOT NULL DEFAULT 1,
+          promo_code      TEXT NOT NULL DEFAULT 'Không dùng',
+          unit_price      INTEGER NOT NULL DEFAULT 0,
+          discount        INTEGER NOT NULL DEFAULT 0,
+          total           INTEGER NOT NULL DEFAULT 0,
+          destination     TEXT NOT NULL DEFAULT '',
+          trip_type       TEXT NOT NULL DEFAULT '',
+          depart_date     TEXT,
+          return_date     TEXT,
+          idempotency_key TEXT,
+          client_id       TEXT,
+          legacy          INTEGER NOT NULL DEFAULT 0,
+          created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          room_id         TEXT,
+          room_name       TEXT,
+          nights          INTEGER NOT NULL DEFAULT 0,
+          rooms_count     INTEGER NOT NULL DEFAULT 1,
+          adults          INTEGER NOT NULL DEFAULT 0,
+          children        INTEGER NOT NULL DEFAULT 0,
+          UNIQUE (user_id, idempotency_key)
+        );
+        INSERT INTO bookings_v2 (${colList}) SELECT ${colList} FROM bookings;
+        DROP TABLE bookings;
+        ALTER TABLE bookings_v2 RENAME TO bookings;
+        CREATE INDEX IF NOT EXISTS idx_bookings_user ON bookings(user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
+      `)
+      db.exec('COMMIT')
+      db.exec('PRAGMA foreign_keys = ON')
+    }
+  } catch (err) {
+    try { db.exec('ROLLBACK') } catch { /* bỏ qua */ }
+    try { db.exec('PRAGMA foreign_keys = ON') } catch { /* bỏ qua */ }
+    console.error('[db] migration mở rộng service_type thất bại:', err.message)
   }
 } catch (err) {
   console.error('[db] migration thêm cột thất bại:', err.message)

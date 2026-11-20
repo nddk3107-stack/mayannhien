@@ -3391,3 +3391,1751 @@ label.field em.field-error {
   }
 }
 
+/* ==========================================================================
+   DYNAMIC BUTTON ANIMATIONS & MICRO-INTERACTIONS (DARK THEME)
+   ========================================================================== */
+@keyframes btnShimmer {
+  0% { transform: translateX(-140%) skewX(-20deg); }
+  100% { transform: translateX(260%) skewX(-20deg); }
+}
+
+@keyframes softPulseGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(79, 124, 255, 0.35), 0 10px 26px rgba(79, 124, 255, 0.28); }
+  50% { box-shadow: 0 0 0 6px rgba(79, 124, 255, 0), 0 14px 32px rgba(79, 124, 255, 0.45); }
+}
+
+@keyframes iconFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+@keyframes planeGlide {
+  0% { transform: translateX(0) rotate(0deg); }
+  50% { transform: translateX(4px) translateY(-2px) rotate(-6deg); }
+  100% { transform: translateX(0) rotate(0deg); }
+}
+
+@keyframes seatPop {
+  0% { transform: scale(0.85); }
+  60% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+/* Mọi nút tương tác có chuyển động mượt + phản hồi nhấn */
+.nav button,
+.plain-btn,
+.login-btn,
+.register-btn,
+.search-submit,
+.pay-btn,
+.pick-room-btn,
+.flight-card button,
+.hotel-card button,
+.back-btn,
+.link-btn,
+.search-services button,
+.trip-toggle button,
+.service-dock button,
+.promo-card,
+.mini-promos button,
+.login-submit,
+.review-submit,
+.momo-pill-btn,
+.momo-filter-chip,
+.momo-sort-btn,
+.momo-date-chip,
+.pay-method-card,
+.bank-chip,
+.social-btn,
+.trust-card-btn {
+  position: relative;
+  overflow: hidden;
+  transition:
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.25s ease,
+    background 0.22s ease,
+    border-color 0.22s ease,
+    color 0.2s ease;
+}
+
+/* Hiệu ứng ánh sáng lướt (shimmer) trên các nút CTA chính */
+.register-btn::after,
+.search-submit::after,
+.pay-btn::after,
+.pick-room-btn::after,
+.flight-card .price-box button::after,
+.hotel-card .hotel-bottom button::after,
+.login-submit::after,
+.review-submit::after,
+.login-required-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+  transform: translateX(-140%) skewX(-20deg);
+  pointer-events: none;
+}
+
+.register-btn:hover::after,
+.search-submit:hover::after,
+.pay-btn:hover::after,
+.pick-room-btn:hover::after,
+.flight-card .price-box button:hover::after,
+.hotel-card .hotel-bottom button:hover::after,
+.login-submit:hover::after,
+.review-submit:hover::after,
+.login-required-btn:hover::after {
+  animation: btnShimmer 0.75s ease forwards;
+}
+
+.register-btn:hover,
+.search-submit:hover,
+.pay-btn:hover:not(:disabled),
+.pick-room-btn:hover,
+.flight-card .price-box button:hover,
+.hotel-card .hotel-bottom button:hover,
+.login-submit:hover:not(:disabled),
+.review-submit:hover:not(:disabled) {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 12px 28px rgba(79, 124, 255, 0.42);
+}
+
+.register-btn:active,
+.search-submit:active,
+.pay-btn:active:not(:disabled),
+.pick-room-btn:active,
+.flight-card .price-box button:active,
+.hotel-card .hotel-bottom button:active,
+.nav button:active,
+.service-dock button:active,
+.momo-pill-btn:active,
+.momo-filter-chip:active,
+.pay-method-card:active,
+.social-btn:active,
+.back-btn:active {
+  transform: translateY(0) scale(0.97) !important;
+}
+
+.brand:hover .brand-mark {
+  animation: planeGlide 0.6s ease;
+  box-shadow: 0 10px 28px rgba(79, 124, 255, 0.55);
+}
+
+.nav button:hover,
+.plain-btn:hover,
+.login-btn:hover {
+  transform: translateY(-1px);
+}
+
+.back-btn:hover {
+  transform: translateX(-3px);
+}
+
+/* Service Dock 8 nút động */
+.service-dock button {
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+}
+
+.service-dock button span {
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.28s ease;
+}
+
+.service-dock button:hover {
+  transform: translateY(-5px);
+  border-color: rgba(96, 145, 255, 0.55);
+  box-shadow: 0 14px 30px rgba(79, 124, 255, 0.22);
+}
+
+.service-dock button:hover span {
+  transform: scale(1.12) translateY(-2px);
+  box-shadow: 0 8px 20px rgba(79, 124, 255, 0.45);
+}
+
+.service-dock button.active {
+  animation: softPulseGlow 2.8s infinite;
+}
+
+.service-dock button.active span {
+  animation: iconFloat 2.4s ease-in-out infinite;
+}
+
+/* 3 thẻ Trust Section dạng button động */
+.trust-card-btn {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  width: 100%;
+  text-align: left;
+  padding: 20px;
+  border-radius: 18px;
+  background: var(--tl-panel, #171b26);
+  border: 1px solid var(--tl-line, rgba(255, 255, 255, 0.08));
+  color: var(--tl-text, #eef1f6);
+  cursor: pointer;
+  font: inherit;
+}
+
+.trust-card-btn > span {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(79, 124, 255, 0.14);
+  font-size: 20px;
+  flex-shrink: 0;
+  transition: transform 0.25s ease, background 0.25s ease;
+}
+
+.trust-card-btn h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  color: var(--tl-text, #eef1f6);
+}
+
+.trust-card-btn p {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--tl-muted, #9aa4b8);
+  line-height: 1.5;
+}
+
+.trust-card-btn:hover {
+  transform: translateY(-4px);
+  border-color: rgba(96, 145, 255, 0.5);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
+}
+
+.trust-card-btn:hover > span {
+  transform: scale(1.12) rotate(-4deg);
+  background: rgba(79, 124, 255, 0.28);
+}
+
+/* ==========================================================================
+   SOCIAL LOGIN (GOOGLE, FACEBOOK, SĐT / OTP) — DARK THEME
+   ========================================================================== */
+.social-login-section {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.social-login-section.two-col {
+  grid-template-columns: 1fr 1fr;
+}
+
+.social-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #eef1f6;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.social-btn:hover {
+  transform: translateY(-2px);
+  border-color: rgba(142, 200, 255, 0.55);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.social-btn.google.active,
+.social-btn.google:hover {
+  border-color: #4285f4;
+  box-shadow: 0 6px 18px rgba(66, 133, 244, 0.25);
+}
+
+.social-btn.facebook {
+  background: rgba(24, 119, 242, 0.85);
+  border-color: rgba(24, 119, 242, 0.95);
+  color: #fff;
+}
+
+.social-btn.facebook:hover,
+.social-btn.facebook.active {
+  background: #1877f2;
+  box-shadow: 0 6px 18px rgba(24, 119, 242, 0.35);
+}
+
+.social-btn.phone {
+  border-color: rgba(16, 185, 129, 0.45);
+  color: #6ee7b7;
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.social-btn.phone:hover,
+.social-btn.phone.active {
+  border-color: #10b981;
+  background: rgba(16, 185, 129, 0.22);
+  box-shadow: 0 6px 18px rgba(16, 185, 129, 0.25);
+}
+
+.social-inline-form {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.social-inline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13.5px;
+  color: #eef1f6;
+}
+
+.otp-demo-hint {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #6ee7b7;
+  font-size: 13px;
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0;
+  color: #94a3b8;
+  font-size: 12.5px;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.login-link {
+  background: none;
+  border: 0;
+  color: #7ab8ff;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+/* ==========================================================================
+   MOMO-STYLE FLIGHT BOOKING & SEAT MAP
+   ========================================================================== */
+.momo-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.momo-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--tl-panel, #171b26);
+  border: 1px solid var(--tl-line, rgba(255, 255, 255, 0.08));
+  color: var(--tl-muted, #9aa4b8);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.momo-step b {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+}
+
+.momo-step.active {
+  color: #eef1f6;
+  border-color: rgba(96, 145, 255, 0.6);
+  background: rgba(79, 124, 255, 0.16);
+}
+
+.momo-step.active b {
+  background: #4f7cff;
+  color: #fff;
+}
+
+.momo-step-line {
+  width: 32px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.momo-search-box {
+  background: var(--tl-panel, #171b26);
+  border: 1px solid var(--tl-line, rgba(255, 255, 255, 0.1));
+  border-radius: 20px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.momo-search-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.momo-trip-pills,
+.momo-cabin-pills {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.momo-pill-btn {
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.momo-pill-btn:hover {
+  border-color: rgba(96, 145, 255, 0.55);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.momo-pill-btn.active {
+  background: linear-gradient(135deg, #4f7cff, #3b63e6);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(79, 124, 255, 0.35);
+}
+
+.momo-route-grid {
+  display: grid;
+  grid-template-columns: 1.2fr auto 1.2fr 1fr 1fr 0.9fr;
+  gap: 12px;
+  align-items: end;
+}
+
+.momo-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.momo-field span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--tl-muted, #9aa4b8);
+}
+
+.momo-field input,
+.momo-field select {
+  width: 100%;
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--tl-panel-2, #1f2433);
+  color: #eef1f6;
+  color-scheme: dark;
+  font-size: 14px;
+}
+
+.momo-field.is-disabled {
+  opacity: 0.45;
+}
+
+.momo-swap-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid rgba(96, 145, 255, 0.45);
+  background: rgba(79, 124, 255, 0.18);
+  color: #8ec8ff;
+  font-size: 18px;
+  font-weight: 800;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), background 0.2s ease;
+}
+
+.momo-swap-btn:hover {
+  background: #4f7cff;
+  color: #fff;
+  transform: scale(1.08);
+}
+
+.momo-swap-btn.spinning {
+  transform: rotate(180deg) scale(1.1);
+}
+
+.momo-date-strip {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.momo-date-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 8px;
+  border-radius: 14px;
+  border: 1px solid var(--tl-line, rgba(255, 255, 255, 0.08));
+  background: var(--tl-panel, #171b26);
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.momo-date-chip small {
+  font-size: 11.5px;
+  color: var(--tl-muted, #9aa4b8);
+}
+
+.momo-date-chip b {
+  font-size: 13.5px;
+  color: #fb923c;
+}
+
+.momo-date-chip:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: rgba(96, 145, 255, 0.5);
+}
+
+.momo-date-chip.active {
+  background: rgba(79, 124, 255, 0.2);
+  border-color: #4f7cff;
+  box-shadow: 0 8px 20px rgba(79, 124, 255, 0.25);
+}
+
+.momo-date-chip.active small,
+.momo-date-chip.active b {
+  color: #fff;
+}
+
+.momo-date-chip:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.momo-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.momo-airlines,
+.momo-sort {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.momo-sort > span {
+  font-size: 13px;
+  color: var(--tl-muted, #9aa4b8);
+}
+
+.momo-filter-chip,
+.momo-sort-btn {
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--tl-panel, #171b26);
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.momo-filter-chip:hover,
+.momo-sort-btn:hover {
+  border-color: rgba(96, 145, 255, 0.5);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.momo-filter-chip.active,
+.momo-sort-btn.active {
+  background: rgba(79, 124, 255, 0.22);
+  border-color: #4f7cff;
+  color: #8ec8ff;
+}
+
+.momo-flight-card {
+  display: flex !important;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.momo-flight-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 18px;
+  align-items: center;
+  width: 100%;
+}
+
+.flight-code {
+  display: block;
+  font-size: 12px;
+  color: var(--tl-muted, #9aa4b8);
+  margin-top: 2px;
+}
+
+.momo-route-line {
+  position: relative;
+}
+
+.route-plane {
+  font-style: normal;
+  font-size: 13px;
+  color: #7ab8ff;
+  margin-left: 6px;
+}
+
+.momo-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.momo-detail-toggle {
+  background: none !important;
+  border: 0 !important;
+  padding: 4px 0 !important;
+  color: #7ab8ff !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  box-shadow: none !important;
+}
+
+.momo-detail-toggle:hover {
+  text-decoration: underline;
+  transform: none !important;
+}
+
+.momo-promo-tag {
+  font-size: 12px;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+.momo-flight-details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  font-size: 13px;
+  color: #cbd5e1;
+}
+
+.momo-flight-details b {
+  display: block;
+  margin-bottom: 6px;
+  color: #eef1f6;
+}
+
+.momo-flight-details p {
+  margin: 4px 0;
+}
+
+.reset-filter-btn {
+  margin-top: 14px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(96, 145, 255, 0.4);
+  background: rgba(79, 124, 255, 0.14);
+  color: #8ec8ff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* Modal chọn hạng vé & sơ đồ ghế */
+.momo-seat-modal {
+  position: relative;
+  width: min(740px, calc(100vw - 32px));
+  max-height: 90vh;
+  overflow-y: auto;
+  background: #161a24;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 22px;
+  padding: 24px;
+  color: #eef1f6;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
+}
+
+.momo-seat-modal.compact {
+  width: min(540px, calc(100vw - 32px));
+}
+
+.momo-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.momo-modal-head h3 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.momo-modal-head p {
+  margin: 0;
+  font-size: 13px;
+  color: #9aa4b8;
+}
+
+.momo-modal-section {
+  margin-bottom: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.momo-modal-section h4 {
+  margin: 0 0 12px;
+  font-size: 14.5px;
+  color: #eef1f6;
+}
+
+.momo-class-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.momo-class-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: #eef1f6;
+  cursor: pointer;
+}
+
+.momo-class-card small {
+  color: #9aa4b8;
+  font-size: 12px;
+}
+
+.momo-class-card strong {
+  margin-top: 4px;
+  color: #fb923c;
+  font-size: 14px;
+}
+
+.momo-class-card.active {
+  border-color: #4f7cff;
+  background: rgba(79, 124, 255, 0.18);
+  box-shadow: 0 0 0 2px rgba(79, 124, 255, 0.25);
+}
+
+.seat-highlight {
+  color: #7ab8ff;
+  font-weight: 800;
+}
+
+.seat-legend {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  color: #9aa4b8;
+}
+
+.seat-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.seat-box {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.seat-box.free { background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.2); }
+.seat-box.chosen { background: #4f7cff; }
+.seat-box.taken { background: rgba(239, 68, 68, 0.25); border: 1px solid rgba(239, 68, 68, 0.4); }
+
+.cabin-map {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.cabin-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.cabin-row-num {
+  width: 20px;
+  font-size: 12px;
+  color: #9aa4b8;
+  font-weight: 700;
+}
+
+.aisle-gap {
+  margin-left: 18px;
+}
+
+.seat-btn {
+  min-width: 44px;
+  padding: 8px 6px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: #eef1f6;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.16s ease, background 0.18s ease;
+}
+
+.seat-btn.free:hover {
+  border-color: #7ab8ff;
+  transform: translateY(-2px);
+}
+
+.seat-btn.chosen {
+  background: linear-gradient(135deg, #4f7cff, #3b63e6);
+  border-color: #7ab8ff;
+  color: #fff;
+  animation: seatPop 0.25s ease;
+}
+
+.seat-btn.taken {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.baggage-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.momo-modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  flex-wrap: wrap;
+}
+
+.momo-modal-foot small {
+  display: block;
+  color: #9aa4b8;
+  font-size: 12.5px;
+}
+
+.momo-modal-foot strong {
+  font-size: 20px;
+  color: #fb923c;
+}
+
+.addon-note {
+  color: #7ab8ff !important;
+  margin-top: 2px;
+}
+
+/* ==========================================================================
+   COMBO DATE PICKER & CUSTOMIZER — DARK THEME
+   ========================================================================== */
+.combo-date-picker {
+  background: var(--tl-panel, #171b26);
+  border: 1px solid var(--tl-line, rgba(255, 255, 255, 0.1));
+  border-radius: 18px;
+  padding: 20px 24px;
+  margin-bottom: 24px;
+}
+
+.combo-date-picker h3 {
+  margin: 0 0 14px;
+  font-size: 17px;
+  color: #eef1f6;
+}
+
+.combo-date-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+.combo-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.combo-inline-date {
+  display: block;
+  margin-top: 10px;
+  color: #8ec8ff;
+  font-size: 13px;
+}
+
+.combo-date-summary {
+  margin: 14px 0 0;
+  padding: 10px 14px;
+  background: rgba(79, 124, 255, 0.14);
+  border: 1px solid rgba(79, 124, 255, 0.35);
+  border-radius: 10px;
+  color: #93c5fd;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.combo-date-warning {
+  margin: 14px 0 0;
+  padding: 10px 14px;
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 10px;
+  color: #fca5a5;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* ==========================================================================
+   PAYMENT METHODS (MOMO, ZALOPAY, THẺ NGÂN HÀNG, THẺ QUỐC TẾ RIÊNG)
+   ========================================================================== */
+.payment-selector-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pay-methods-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.pay-method-card {
+  display: flex !important;
+  flex-direction: column;
+  align-items: flex-start !important;
+  text-align: left;
+  gap: 6px;
+  padding: 14px 16px !important;
+  border-radius: 14px !important;
+  border: 1.5px solid rgba(255, 255, 255, 0.1) !important;
+  background: var(--tl-panel-2, #1f2433) !important;
+  color: #eef1f6 !important;
+  cursor: pointer;
+}
+
+.pay-method-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(142, 200, 255, 0.45) !important;
+}
+
+.pay-brand-pill {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 9px;
+  border-radius: 999px;
+  letter-spacing: 0.3px;
+}
+
+.pill-momo { background: rgba(165, 0, 100, 0.25); color: #f472b6; border: 1px solid rgba(244, 114, 182, 0.4); }
+.pill-zalopay { background: rgba(0, 104, 255, 0.22); color: #60a5fa; border: 1px solid rgba(96, 165, 250, 0.4); }
+.pill-bank { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(52, 211, 153, 0.4); }
+.pill-intl { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.4); }
+
+.pay-method-title {
+  font-size: 15px;
+  color: #eef1f6;
+}
+
+.pay-method-desc {
+  font-size: 12px;
+  color: #9aa4b8;
+}
+
+.pay-check-dot {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #4f7cff;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+}
+
+.pay-method-card.pay-momo.active {
+  border-color: #ec4899 !important;
+  background: rgba(165, 0, 100, 0.18) !important;
+  box-shadow: 0 8px 24px rgba(236, 72, 153, 0.22);
+}
+
+.pay-method-card.pay-zalopay.active {
+  border-color: #3b82f6 !important;
+  background: rgba(0, 104, 255, 0.16) !important;
+  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.22);
+}
+
+.pay-method-card.pay-bank.active {
+  border-color: #10b981 !important;
+  background: rgba(16, 185, 129, 0.14) !important;
+  box-shadow: 0 8px 24px rgba(16, 185, 129, 0.2);
+}
+
+.pay-method-card.pay-intl.active {
+  border-color: #f59e0b !important;
+  background: rgba(245, 158, 11, 0.14) !important;
+  box-shadow: 0 8px 24px rgba(245, 158, 11, 0.2);
+}
+
+.pay-detail-panel {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  padding: 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.pay-detail-info {
+  flex: 1;
+}
+
+.pay-detail-info.full {
+  width: 100%;
+}
+
+.pay-detail-info h4 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  color: #eef1f6;
+}
+
+.pay-detail-info p {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #9aa4b8;
+}
+
+.pay-qr-mock {
+  width: 112px;
+  height: 124px;
+  border-radius: 14px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.pay-qr-mock.momo-qr {
+  background: linear-gradient(135deg, #a50064, #d81b60);
+  color: #fff;
+}
+
+.pay-qr-mock.zalo-qr {
+  background: linear-gradient(135deg, #0068ff, #00a8ff);
+  color: #fff;
+}
+
+.qr-grid {
+  width: 82px;
+  height: 82px;
+  border-radius: 8px;
+  background-color: #fff;
+  background-image:
+    linear-gradient(90deg, #111 25%, transparent 25%, transparent 50%, #111 50%, #111 75%, transparent 75%),
+    linear-gradient(#111 25%, transparent 25%, transparent 50%, #111 50%, #111 75%, transparent 75%);
+  background-size: 16px 16px;
+  opacity: 0.92;
+}
+
+.pay-perk-badge {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #6ee7b7;
+  background: rgba(16, 185, 129, 0.14);
+  padding: 5px 10px;
+  border-radius: 8px;
+}
+
+.bank-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.bank-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--tl-panel-2, #1f2433);
+  color: #eef1f6;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.bank-chip.active {
+  border-color: #34d399;
+  background: rgba(16, 185, 129, 0.18);
+}
+
+.bank-dot {
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.bank-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.bank-form-row.intl-row {
+  grid-template-columns: 2fr 1fr 0.8fr;
+}
+
+/* ==========================================================================
+   HOTEL REVIEWS & FEEDBACK — DARK THEME
+   ========================================================================== */
+.hotel-review-pill {
+  margin-left: auto;
+  padding: 4px 10px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(142, 200, 255, 0.35) !important;
+  background: rgba(79, 124, 255, 0.16) !important;
+  color: #8ec8ff !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  box-shadow: none !important;
+}
+
+.hotel-review-pill:hover {
+  background: #4f7cff !important;
+  color: #fff !important;
+  transform: translateY(-1px) !important;
+}
+
+.review-modal-dialog {
+  position: relative;
+  width: min(760px, calc(100vw - 32px));
+  max-height: 90vh;
+  overflow-y: auto;
+  background: #161a24;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 22px;
+  padding: 24px;
+  color: #eef1f6;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
+}
+
+.review-modal-hotel-head h3 {
+  margin: 0 0 4px;
+  font-size: 19px;
+}
+
+.hotel-reviews {
+  margin-top: 36px;
+  padding-top: 28px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.hotel-reviews.compact {
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.reviews-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.reviews-header h2 {
+  font-size: 20px;
+  margin: 0 0 4px;
+  color: #eef1f6;
+}
+
+.reviews-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(79, 124, 255, 0.12);
+  border: 1px solid rgba(79, 124, 255, 0.25);
+}
+
+.reviews-avg {
+  font-size: 32px;
+  font-weight: 800;
+  color: #7ab8ff;
+  line-height: 1;
+}
+
+.reviews-stars {
+  color: #fbbf24;
+  font-size: 16px;
+  display: block;
+}
+
+.reviews-summary small {
+  color: #9aa4b8;
+  font-size: 12px;
+}
+
+.reviews-filter-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.reviews-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.review-card {
+  background: var(--tl-panel, #171b26);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+
+.review-card.is-feedback {
+  border-color: rgba(251, 146, 60, 0.35);
+  background: rgba(251, 146, 60, 0.05);
+}
+
+.review-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.review-top-info {
+  flex: 1;
+}
+
+.review-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.review-type-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.review-type-badge.verified {
+  background: rgba(52, 211, 153, 0.14);
+  color: #6ee7b7;
+}
+
+.review-type-badge.feedback {
+  background: rgba(251, 146, 60, 0.18);
+  color: #fdba74;
+}
+
+.review-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4f7cff, #3b63e6);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.review-top b {
+  font-size: 14px;
+  color: #eef1f6;
+}
+
+.review-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.review-stars {
+  color: #fbbf24;
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+
+.review-meta small {
+  color: #9aa4b8;
+  font-size: 12px;
+}
+
+.review-card p {
+  margin: 0;
+  color: #d3dae4;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.feedback-reply-note {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(79, 124, 255, 0.1);
+  color: #93c5fd;
+  font-size: 12.5px;
+}
+
+.review-form {
+  background: var(--tl-panel, #171b26);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 20px;
+}
+
+.review-mode-tabs {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.review-form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.review-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.review-form-fields textarea {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  background: var(--tl-panel-2, #1f2433);
+  color: #eef1f6;
+}
+
+.review-form-fields textarea:focus {
+  outline: none;
+  border-color: #4f7cff;
+}
+
+.review-rating-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.review-rating-input > span {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.star-selector {
+  display: flex;
+  gap: 4px;
+}
+
+.star-selector .star {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #475569;
+  cursor: pointer;
+  padding: 2px;
+  transition: color 0.15s, transform 0.15s;
+  line-height: 1;
+}
+
+.star-selector .star:hover {
+  transform: scale(1.22);
+}
+
+.star-selector .star.active {
+  color: #fbbf24;
+}
+
+.review-submit {
+  padding: 11px 22px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #4f7cff, #3b63e6);
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.review-submit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.review-success {
+  padding: 10px 14px;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: 10px;
+  color: #6ee7b7;
+  font-weight: 600;
+  font-size: 13.5px;
+  margin: 0 0 12px;
+}
+
+/* ==========================================================================
+   5 EXTRA SERVICE PAGES & SUPPORT CHAT MODAL
+   ========================================================================== */
+.extra-filter-bar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  padding: 16px 20px;
+  border-radius: 18px;
+  background: var(--tl-panel, #171b26);
+  border: 1px solid var(--tl-line, rgba(255, 255, 255, 0.08));
+}
+
+.extra-date-inputs {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.extra-car-grid {
+  display: grid;
+  grid-template-columns: 1.3fr 1.5fr 1fr 0.8fr;
+  gap: 12px;
+}
+
+.extra-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.extra-service-card,
+.insurance-card {
+  background: var(--tl-panel, #171b26);
+  border: 1px solid var(--tl-line, rgba(255, 255, 255, 0.09));
+  border-radius: 18px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.extra-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.extra-tag,
+.extra-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(79, 124, 255, 0.22);
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.extra-cap {
+  color: #9aa4b8;
+}
+
+.bus-seat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.insurance-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+
+.insurance-card.recommended {
+  border-color: #4f7cff;
+  box-shadow: 0 12px 32px rgba(79, 124, 255, 0.22);
+}
+
+.ins-price strong {
+  font-size: 26px;
+  color: #fb923c;
+}
+
+.ins-price small {
+  color: #9aa4b8;
+  margin-left: 6px;
+}
+
+.ins-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ins-metrics > div {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.ins-metrics span { color: #9aa4b8; }
+.ins-metrics b { color: #eef1f6; }
+
+.ins-perks {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13.5px;
+  color: #cbd5e1;
+  flex: 1;
+}
+
+.support-chat-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 12px 0;
+}
+
+.chat-bubble {
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.chat-bubble.bot {
+  align-self: flex-start;
+  background: rgba(79, 124, 255, 0.16);
+  color: #eef1f6;
+}
+
+.chat-bubble.user {
+  align-self: flex-end;
+  background: #4f7cff;
+  color: #fff;
+}
+
+.support-quick-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.support-chat-form {
+  display: flex;
+  gap: 8px;
+}
+
+.support-chat-form input {
+  flex: 1;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: var(--tl-panel-2, #1f2433);
+  color: #eef1f6;
+}
+
+/* Login required state */
+.empty-bookings.login-required {
+  text-align: center;
+  padding: 48px 24px;
+}
+
+.empty-bookings.login-required > span {
+  font-size: 44px;
+  display: inline-grid;
+  place-items: center;
+  margin-bottom: 16px;
+}
+
+.login-required-btn {
+  background: linear-gradient(135deg, #4f7cff, #3b63e6) !important;
+  color: #fff !important;
+  font-weight: 700 !important;
+  padding: 12px 26px !important;
+  border-radius: 999px !important;
+}
+
+@media (max-width: 960px) {
+  .momo-route-grid,
+  .extra-car-grid,
+  .insurance-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .momo-date-strip {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .momo-class-grid,
+  .extra-cards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .momo-route-grid,
+  .extra-car-grid,
+  .combo-date-grid,
+  .combo-two-col,
+  .pay-methods-grid,
+  .bank-grid,
+  .bank-form-row,
+  .bank-form-row.intl-row,
+  .momo-flight-details,
+  .review-form-row,
+  .insurance-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .momo-flight-row {
+    grid-template-columns: 1fr;
+  }
+
+  .pay-detail-panel {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .social-login-section {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
