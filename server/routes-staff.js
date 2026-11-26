@@ -3,7 +3,7 @@ import express from 'express'
 import crypto from 'node:crypto'
 import { db, writeAuditLog } from './db.js'
 import { requireRole } from './auth.js'
-import { broadcast, pushNotification } from './realtime.js'
+import { broadcast, broadcastBookingUpdated, broadcastDashboardUpdate, pushNotification } from './realtime.js'
 
 export const staffRouter = express.Router()
 
@@ -12,15 +12,21 @@ staffRouter.use(requireRole('staff', 'admin'))
 
 // POST /api/staff/checkin/verify — Quét & xác thực QR Check-in
 staffRouter.post('/checkin/verify', (req, res) => {
-  let data = req.body
-  if (data?.qrData && typeof data.qrData === 'string') {
-    try {
-      data = JSON.parse(data.qrData)
-    } catch {
-      return res.status(400).json({ ok: false, error: 'Dữ liệu mã QR không đúng định dạng JSON.' })
+  let data = req.body || {}
+  const rawQr = data?.qrData ?? data?.qrContent
+  if (rawQr && typeof rawQr === 'string') {
+    const trimmed = rawQr.trim()
+    if (trimmed.startsWith('{')) {
+      try {
+        data = JSON.parse(trimmed)
+      } catch {
+        return res.status(400).json({ ok: false, error: 'Dữ liệu mã QR không đúng định dạng JSON.' })
+      }
+    } else {
+      data = { ...data, code: trimmed }
     }
-  } else if (data?.qrData && typeof data.qrData === 'object') {
-    data = data.qrData
+  } else if (rawQr && typeof rawQr === 'object') {
+    data = rawQr
   }
 
   const passedSig = data?.sig || data?.signature
@@ -122,6 +128,16 @@ staffRouter.post('/checkin/verify', (req, res) => {
       checkedInAt: nowIso,
       checkedInBy: staffEmail,
     })
+    broadcastBookingUpdated({
+      id: current.id,
+      code: current.code,
+      userId: current.user_id,
+      status: 'checked_in',
+      paymentStatus: current.payment_status,
+      checkedInAt: nowIso,
+      checkedInBy: staffEmail,
+    })
+    broadcastDashboardUpdate('booking:checked_in')
 
     pushNotification(current.user_id, {
       title: 'Check-in thành công! 🎉',

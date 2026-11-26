@@ -26,11 +26,18 @@ export function broadcast(event, data, channel = 'all') {
   return realtimeBus.publish(event, data, channel)
 }
 
+export function broadcastDashboardUpdate(reason = 'updated') {
+  realtimeBus.publish('dashboard:update', { reason, timestamp: Date.now() }, 'admin')
+  realtimeBus.publish('dashboard:update', { reason, timestamp: Date.now() }, 'bookings')
+  realtimeBus.publish('dashboard:update', { reason, timestamp: Date.now() }, 'all')
+}
+
 export function broadcastBookingCreated(booking) {
   realtimeBus.publish('booking:created', { booking }, 'bookings')
   if (booking.userId) {
     realtimeBus.publish('booking:created', { booking }, `user:${booking.userId}`)
   }
+  broadcastDashboardUpdate('booking:created')
 }
 
 export function broadcastBookingUpdated(booking) {
@@ -38,6 +45,7 @@ export function broadcastBookingUpdated(booking) {
   if (booking.userId) {
     realtimeBus.publish('booking:updated', { booking }, `user:${booking.userId}`)
   }
+  broadcastDashboardUpdate('booking:updated')
 }
 
 export function broadcastBookingCancelled(code, userId) {
@@ -45,14 +53,17 @@ export function broadcastBookingCancelled(code, userId) {
   if (userId) {
     realtimeBus.publish('booking:cancelled', { code, status: 'Đã hủy' }, `user:${userId}`)
   }
+  broadcastDashboardUpdate('booking:cancelled')
 }
 
 export function broadcastPaymentReceived(paymentData) {
   realtimeBus.publish('payment:received', paymentData, 'bookings')
+  broadcastDashboardUpdate('payment:received')
 }
 
 export function broadcastCatalogUpdated(kind, action, item) {
   realtimeBus.publish('catalog:updated', { kind, action, item }, 'catalog')
+  broadcastDashboardUpdate('catalog:updated')
 }
 
 export function broadcastInventoryChanged(kind, id, details) {
@@ -103,8 +114,8 @@ function getLiveTelemetry(wsClientsCount = 0) {
     const bStats = db.prepare(`
       SELECT 
         COUNT(*) as total,
-        COALESCE(SUM(CASE WHEN status != 'Đã hủy' THEN total ELSE 0 END), 0) as revenue,
-        SUM(CASE WHEN status = 'Đã xác nhận' THEN 1 ELSE 0 END) as confirmed,
+        COALESCE(SUM(CASE WHEN payment_status = 'paid' AND status IN ('Đã xác nhận', 'Đã thanh toán', 'checked_in', 'Hoàn tất') AND legacy = 0 THEN total ELSE 0 END), 0) as revenue,
+        SUM(CASE WHEN status IN ('Đã xác nhận', 'Đã thanh toán', 'checked_in', 'Hoàn tất') THEN 1 ELSE 0 END) as confirmed,
         SUM(CASE WHEN status = 'Đã hủy' THEN 1 ELSE 0 END) as cancelled
       FROM bookings
     `).get()

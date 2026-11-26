@@ -832,9 +832,9 @@ publicRouter.post('/bookings', requireAuth, rateLimitMiddleware('booking', { win
 
       db.prepare(`INSERT INTO bookings (${INSERT_COLS}) VALUES ${INSERT_VALUES}`)
         .run(code, userId, serviceType, itemId, priced.title,
-          isWallet ? 'Đã thanh toán' : ((paymentMethod.toLowerCase().includes('sepay') || paymentMethod.toLowerCase().includes('vietqr')) ? 'Chờ thanh toán' : 'Đã xác nhận'),
+          isSepay ? 'Chờ thanh toán' : 'Đã xác nhận',
           isWallet ? 'Số dư ví Mây An Nhiên' : paymentMethod,
-          isWallet ? 'paid' : ((paymentMethod.toLowerCase().includes('sepay') || paymentMethod.toLowerCase().includes('vietqr')) ? 'pending' : 'simulated'),
+          isSepay ? 'pending' : 'paid',
           travelerName, travelerPhone, travelerEmail, req.session.user.email, passengers, promoCode,
           priced.unitPrice, priced.discount, priced.total, destination, tripType, depart, ret,
           idempotencyKey, clientId, nowIso, nowIso,
@@ -945,8 +945,9 @@ publicRouter.patch('/bookings/:code/cancel', requireAuth, async (req, res) => {
       db.exec('ROLLBACK')
       return bad(res, 'Không thể hủy đơn ở trạng thái hiện tại.', 409)
     }
-    db.prepare(`UPDATE bookings SET status = 'Đã hủy',
-                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`).run(row.id)
+    const nextPaymentOnCancel = row.payment_status === 'paid' ? 'refund_pending' : row.payment_status
+    db.prepare(`UPDATE bookings SET status = 'Đã hủy', payment_status = ?, cancel_reason = 'Khách hàng tự hủy đơn',
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`).run(nextPaymentOnCancel, row.id)
     if (row.seat_code) {
       try { releaseFlightSeat(row.item_id, row.seat_code) } catch { /* bỏ qua lỗi giải phóng ghế phụ */ }
     }

@@ -3,7 +3,7 @@
 //  - KHÔNG TIN role trong localStorage: mọi dữ liệu đều do /api/admin/* trả về
 //    sau khi server xác thực cookie phiên + role='admin'.
 //  - Giao diện admin KHÔNG trộn vào menu/điều hướng của người dùng.
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -16,14 +16,17 @@ import {
   CarTaxiFront,
   Cloud,
   Download,
+  Eye,
   FerrisWheel,
   FileText,
   Gift,
+  Grid,
   Loader2,
   LogOut,
   Moon,
   Plane,
   Plus,
+  QrCode,
   ReceiptText,
   RefreshCw,
   Shield,
@@ -32,9 +35,11 @@ import {
   Sun,
   TicketPercent,
   TrainFront,
+  Trash2,
   Users,
   X,
 } from 'lucide-react'
+import { Html5Qrcode } from 'html5-qrcode'
 import { apiFetch } from '../services/api.js'
 import '../styles/admin.css'
 import { useRealtime } from '../realtime/RealtimeContext.jsx'
@@ -48,14 +53,16 @@ const ADMIN_SECTIONS = [
   { id: 'combos', label: 'Combo', Icon: Gift },
   { id: 'promotions', label: 'Khuyến mãi', Icon: TicketPercent },
   { id: 'users', label: 'Người dùng', Icon: Users },
+  { id: 'audit-logs', label: 'Nhật ký (Audit)', Icon: FileText },
 ]
 
-const STATUS_OPTIONS = ['Đã tạo', 'Chờ thanh toán', 'Đã thanh toán', 'Đã xác nhận', 'checked_in', 'Đã hủy']
+const STATUS_OPTIONS = ['Đã tạo', 'Chờ thanh toán', 'Đã thanh toán', 'Đã xác nhận', 'checked_in', 'Hoàn tất', 'Đã hủy']
 const PAYMENT_LABELS = {
-  pending: 'Chưa thanh toán',
-  simulated: 'Thanh toán mô phỏng (demo)',
-  paid: 'Đã thanh toán thật (đã đối soát)',
+  pending: 'Chờ thanh toán',
+  paid: 'Đã thanh toán',
+  refund_pending: 'Chờ hoàn tiền',
   refunded: 'Đã hoàn tiền',
+  simulated: 'Đã thanh toán',
 }
 
 // Helpers dùng trong file này (không export -> giữ nguyên fast refresh của React).
@@ -191,6 +198,7 @@ export default function AdminApp({ onExit }) {
   const [user, setUser] = useState(undefined)
   const [checking, setChecking] = useState(true)
   const [section, setSection] = useState(routeFromHash)
+  const [bookingPreset, setBookingPreset] = useState(null)
   const [blockedReason, setBlockedReason] = useState('')
   const [adminTheme, setAdminTheme] = useState(() => {
     try { return localStorage.getItem('mayan_theme') || 'dark' } catch { return 'dark' }
@@ -221,7 +229,8 @@ export default function AdminApp({ onExit }) {
     if (window.location.hash !== `#/admin/${section}`) window.location.hash = `#/admin/${section}`
   }, [section])
 
-  const goto = (id) => {
+  const goto = (id, preset = null) => {
+    setBookingPreset(preset)
     setSection(id) // effect phía trên sẽ ghi hash tương ứng
   }
 
@@ -370,7 +379,7 @@ export default function AdminApp({ onExit }) {
           <ErrorBar message={blockedReason} onRetry={() => setBlockedReason('')} />
           {section === 'dashboard' && <DashboardSection call={call} onGoto={goto} />}
           {section === 'audit-logs' && <AuditLogViewerSection call={call} onBack={() => goto('dashboard')} />}
-          {section === 'bookings' && <BookingsSection call={call} />}
+          {section === 'bookings' && <BookingsSection call={call} preset={bookingPreset} />}
           {section === 'hotels' && <CatalogCrudSection kind="hotels" call={call} />}
           {section === 'rooms' && <RoomCrudSection call={call} />}
           {section === 'flights' && <CatalogCrudSection kind="flights" call={call} />}
@@ -385,173 +394,897 @@ export default function AdminApp({ onExit }) {
 }
 
 
-/* ------------------------------------------------------------ dashboard */
-function DashboardSection({ call, onGoto }) {
-  const [stats, setStats] = useState(null)
-  const [error, setError] = useState('')
-  const [showExportModal, setShowExportModal] = useState(false)
-  const { lastTelemetry, subscribe } = useRealtime()
+/* ------------------------------------------------ QR Scanner Modal (Admin) */
+function AdminQrScannerModal({ onClose, onSuccess }) {
+  const [manualCode, setManualCode] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [scanResult, setScanResult] = useState(null)
+  const [cameraError, setCameraError] = useState('')
+  const [cameraActive, setCameraActive] = useState(false)
+  const qrRef = useRef(null)
+  const fileRef = useRef(null)
 
-  const load = async () => {
-    setError('')
-    const res = await call('/api/admin/stats')
-    if (!res.ok) { setError(res.data?.error || 'Không tải được thống kê.'); return }
-    setStats(res.data?.data || null)
+  const stopCam = async () => {
+    if (qrRef.current) {
+      try {
+        if (qrRef.current.isScanning) await qrRef.current.stop()
+        await qrRef.current.clear()
+      } catch {}
+    }
+    setCameraActive(false)
   }
 
-  useEffect(() => { const t = setTimeout(() => load(), 0); return () => clearTimeout(t) }, []) // eslint-disable-line react-hooks/exhaustive-deps react/set-state-in-effect
+  const startCam = async () => {
+    setCameraError('')
+    try {
+      await stopCam()
+      const devices = await Html5Qrcode.getCameras()
+      if (!devices || !devices.length) {
+        setCameraError('Không tìm thấy thiết bị Camera. Bạn có thể tải ảnh mã QR hoặc nhập mã đơn bên dưới.')
+        return
+      }
+      const qr = new Html5Qrcode('admin-qr-reader')
+      qrRef.current = qr
+      await qr.start(
+        devices[devices.length - 1].id,
+        { fps: 10, qrbox: { width: 220, height: 220 } },
+        (decodedText) => {
+          verifyTicket({ qrData: decodedText })
+        },
+        () => {}
+      )
+      setCameraActive(true)
+    } catch {
+      setCameraError('Không mở được Camera trực tiếp. Vui lòng chọn ảnh mã QR hoặc nhập mã đặt chỗ bên dưới.')
+    }
+  }
 
   useEffect(() => {
-    const unsub1 = subscribe('booking:created', () => load())
-    const unsub2 = subscribe('booking:updated', () => load())
-    return () => { unsub1(); unsub2() }
-  }, [subscribe])
+    const t = setTimeout(() => startCam(), 250)
+    return () => {
+      clearTimeout(t)
+      stopCam()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  if (error) return <ErrorBar message={error} onRetry={load} />
-  if (!stats) return <div className="admin-loading">Đang tải thống kê…</div>
+  const verifyTicket = async (payload) => {
+    setLoading(true)
+    setScanResult(null)
+    const res = await apiFetch('/api/staff/checkin/verify', { method: 'POST', body: payload })
+    setLoading(false)
+    if (res.ok) {
+      setScanResult({ ok: true, message: res.data?.message || 'Check-in thành công!', booking: res.data?.booking })
+      setManualCode('')
+      onSuccess?.(res.data?.booking)
+    } else {
+      setScanResult({ ok: false, error: res.data?.error || 'Xác thực vé thất bại.' })
+    }
+  }
 
-  const cards = [
-    { label: 'Tổng đơn đặt chỗ', value: stats.totalBookings, sub: 'tất cả thời gian' },
-    { label: 'Doanh thu (đơn xác nhận)', value: money(stats.revenue), sub: 'phần lớn là thanh toán mô phỏng' },
-    { label: 'Người dùng', value: stats.users, sub: `${stats.admins} quản trị viên` },
-    { label: 'Sản phẩm đang bán', value: stats.hotels + stats.flights + stats.combos, sub: `${stats.hotels}KS · ${stats.flights} chuyến · ${stats.combos} combo` },
-  ]
-  const maxTrend = Math.max(1, ...stats.trend.map((t) => t.count))
+  const handleFile = async (e) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    setCameraError('')
+    try {
+      await stopCam()
+      const qr = new Html5Qrcode('admin-qr-reader')
+      qrRef.current = qr
+      const decoded = await qr.scanFile(f, true)
+      verifyTicket({ qrData: decoded })
+    } catch {
+      setCameraError('Không đọc được mã QR trong ảnh đã chọn.')
+    }
+  }
 
   return (
-    <div className="admin-dashboard">
-      {lastTelemetry && (
-        <section className="admin-panel" style={{ marginBottom: '1.25rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-            <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }} />
-              Live Telemetry & Máy Chủ (Real-Time Không Tải Lại)
-            </h3>
-            <span style={{ fontSize: '0.75rem', opacity: 0.8, color: '#10b981', fontWeight: 600 }}>
-              WebSocket Stream Đang Chạy
-            </span>
-          </div>
-          <div className="admin-stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginBottom: 0 }}>
-            <div className="admin-stat">
-              <span>Client Trực Tuyến</span>
-              <strong style={{ color: '#10b981' }}>{lastTelemetry.realtime?.wsClients ?? 0} kết nối</strong>
-              <small>WebSocket Live</small>
-            </div>
-            <div className="admin-stat">
-              <span>RAM Heap / RSS</span>
-              <strong>{lastTelemetry.process?.heapUsedMb ?? 0} / {lastTelemetry.process?.rssMb ?? 0} MB</strong>
-              <small>Node.js Runtime</small>
-            </div>
-            <div className="admin-stat">
-              <span>CPU Cores / Tải</span>
-              <strong>{lastTelemetry.os?.cpuCores ?? 0} Cores · Load {lastTelemetry.os?.loadAvg?.[0] ?? 0}</strong>
-              <small>Uptime: {Math.floor((lastTelemetry.os?.uptime ?? 0) / 60)} phút</small>
-            </div>
-            <div className="admin-stat">
-              <span>Dữ Liệu SQLite Trực Tiếp</span>
-              <strong>{lastTelemetry.database?.totalBookings ?? 0} đơn ({lastTelemetry.database?.confirmedBookings ?? 0} duyệt)</strong>
-              <small>Doanh thu: {money(lastTelemetry.database?.realRevenue ?? 0)}</small>
-            </div>
-          </div>
-        </section>
-      )}
+    <Modal title="Quét Mã QR Check-in Vé Điện Tử (E-Ticket HMAC-SHA256)" onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button type="button" onClick={cameraActive ? stopCam : startCam}>
+            <Camera size={14} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+            {cameraActive ? 'Tắt Camera' : 'Bật Camera'}
+          </button>
+          <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
+          <button type="button" onClick={() => fileRef.current?.click()}>
+            Quét từ file ảnh QR
+          </button>
+        </div>
 
-      <div className="admin-stat-grid">
-        {cards.map((c) => (
-          <div className="admin-stat" key={c.label}>
-            <span>{c.label}</span>
-            <strong>{c.value}</strong>
-            <small>{c.sub}</small>
-          </div>
-        ))}
-      </div>
+        {cameraError && <div className="admin-error" role="alert"><span>{cameraError}</span></div>}
 
-      <div className="admin-panel-row">
-        <section className="admin-panel">
-          <h3>Đơn theo trạng thái</h3>
-          {Object.keys(stats.byStatus).length === 0
-            ? <Empty text="Chưa có đơn đặt chỗ nào." />
-            : (
-              <ul className="admin-status-list">
-                {Object.entries(stats.byStatus).map(([status, info]) => (
-                  <li key={status}>
-                    <span className={`admin-dot ${status === 'Đã hủy' ? 'danger' : status === 'Đã xác nhận' ? 'ok' : 'warn'}`} />
-                    <b>{status}</b>
-                    <em>{info.count} đơn</em>
-                    <strong>{money(info.amount)}</strong>
-                  </li>
-                ))}
-              </ul>
-            )}
-        </section>
+        <div
+          id="admin-qr-reader"
+          style={{
+            width: '100%',
+            minHeight: '220px',
+            borderRadius: '10px',
+            overflow: 'hidden',
+            border: '1px dashed var(--adm-border)',
+            background: 'var(--adm-panel)',
+          }}
+        />
 
-        <section className="admin-panel">
-          <h3>Đơn mới 7 ngày qua</h3>
-          <div className="admin-trend">
-            {stats.trend.map((t) => (
-              <div className="admin-trend-col" key={t.day} title={`${t.day}: ${t.count} đơn`}>
-                <span className="admin-trend-bar" style={{ height: `${Math.round((t.count / maxTrend) * 100)}%` }} />
-                <em>{t.count}</em>
-                <small>{t.day.slice(5)}</small>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (!manualCode.trim()) return
+            const raw = manualCode.trim()
+            verifyTicket(raw.startsWith('{') ? { qrData: raw } : { bookingCode: raw.toUpperCase() })
+          }}
+          style={{ display: 'flex', gap: '8px' }}
+        >
+          <input
+            value={manualCode}
+            onChange={(e) => setManualCode(e.target.value)}
+            placeholder="Nhập mã đơn (VD: MAN1234567) hoặc chuỗi JSON QR…"
+            style={{ flex: 1 }}
+          />
+          <button type="submit" className="primary" disabled={loading || !manualCode.trim()}>
+            {loading ? 'Đang kiểm tra…' : 'Check-in ngay'}
+          </button>
+        </form>
+
+        {scanResult && (
+          <div
+            style={{
+              padding: '12px',
+              borderRadius: '10px',
+              border: `1.5px solid ${scanResult.ok ? '#10b981' : '#ef4444'}`,
+              background: scanResult.ok ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
+            }}
+          >
+            <b>{scanResult.ok ? `✓ ${scanResult.message}` : `✕ ${scanResult.error}`}</b>
+            {scanResult.booking && (
+              <div style={{ fontSize: '0.85rem', marginTop: '6px' }}>
+                Mã đơn: <b>{scanResult.booking.code}</b> · Khách: <b>{scanResult.booking.travelerName}</b> · Dịch vụ: {scanResult.booking.title} ({money(scanResult.booking.total)})
               </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
+/* ------------------------------------------- Booking Detail & Note Modal */
+function BookingDetailModal({ booking, call, onClose, onSaved }) {
+  const [note, setNote] = useState(booking.internalNote || '')
+  const [savingNote, setSavingNote] = useState(false)
+  const [payments, setPayments] = useState({ attempts: [], transactions: [] })
+  const [downloading, setDownloading] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  useEffect(() => {
+    call(`/api/admin/bookings/${encodeURIComponent(booking.code)}/payments`).then((res) => {
+      if (res.ok && res.data?.data) setPayments(res.data.data)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booking.code])
+
+  const saveNote = async () => {
+    setSavingNote(true)
+    setMsg('')
+    const res = await call(`/api/admin/bookings/${booking.id}`, {
+      method: 'PATCH',
+      body: { internalNote: note },
+    })
+    setSavingNote(false)
+    if (res.ok) {
+      setMsg('Đã lưu ghi chú nội bộ và ghi Audit Log.')
+      onSaved?.(res.data?.data)
+    } else {
+      setMsg(res.data?.error || 'Không lưu được ghi chú.')
+    }
+  }
+
+  const downloadEticket = async () => {
+    setDownloading(true)
+    try {
+      const res = await fetch(`/api/bookings/${booking.id}/eticket`, {
+        headers: { 'X-Requested-With': 'fetch' },
+        credentials: 'same-origin',
+      })
+      if (!res.ok) throw new Error('Không thể xuất E-Ticket cho đơn này.')
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `MayAnNhien-ETicket-${booking.code}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (e) {
+      setMsg(e.message)
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  return (
+    <Modal title={`Chi tiết đơn đặt chỗ: ${booking.code}`} onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '0.9rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', padding: '12px', borderRadius: '10px', background: 'var(--adm-panel)', border: '1px solid var(--adm-border)' }}>
+          <div><small style={{ opacity: 0.7 }}>Khách hàng:</small><br /><b>{booking.traveler?.name}</b> ({booking.traveler?.phone})</div>
+          <div><small style={{ opacity: 0.7 }}>Email:</small><br /><b>{booking.traveler?.email || booking.ownerEmail}</b></div>
+          <div><small style={{ opacity: 0.7 }}>Dịch vụ ({booking.serviceType}):</small><br /><b>{booking.title}</b></div>
+          <div><small style={{ opacity: 0.7 }}>Số hành khách:</small><br /><b>{booking.passengers} khách</b> {booking.roomName ? `· Phòng: ${booking.roomName}` : ''} {booking.seatCode ? `· Ghế: ${booking.seatCode}` : ''}</div>
+          <div><small style={{ opacity: 0.7 }}>Lịch trình:</small><br /><b>{booking.dates?.depart || '—'} → {booking.dates?.ret || '—'}</b></div>
+          <div>
+            <small style={{ opacity: 0.7 }}>Thanh toán & Voucher:</small><br />
+            <b>{money(booking.total)}</b> {booking.discount > 0 ? `(Giảm ${money(booking.discount)} · Mã ${booking.promo})` : ''}
+          </div>
+          <div><small style={{ opacity: 0.7 }}>Trạng thái đơn:</small><br /><span className="admin-tag ok">{booking.status}</span></div>
+          <div><small style={{ opacity: 0.7 }}>Trạng thái thanh toán:</small><br /><span className="admin-tag">{PAYMENT_LABELS[booking.paymentStatus] || booking.paymentStatus}</span> ({booking.paymentMethod || 'Chuyển khoản'})</div>
+          {booking.checkedInAt && (
+            <div style={{ gridColumn: 'span 2' }}>
+              <small style={{ opacity: 0.7 }}>Check-in:</small> <b>{formatDate(booking.checkedInAt)}</b> bởi <b>{booking.checkedInBy}</b>
+            </div>
+          )}
+          {booking.cancelReason && (
+            <div style={{ gridColumn: 'span 2', color: '#ef4444' }}>
+              <small>Lý do hủy/hoàn:</small> <b>{booking.cancelReason}</b>
+            </div>
+          )}
+        </div>
+
+        <Field label="Ghi chú vận hành nội bộ (Admin / Lễ tân)" wide>
+          <textarea
+            rows={2}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Nhập ghi chú đặc biệt về đơn đặt chỗ, yêu cầu xuất hóa đơn, nâng hạng phòng…"
+          />
+        </Field>
+
+        {payments.attempts?.length > 0 && (
+          <div>
+            <b style={{ fontSize: '0.85rem' }}>Lịch sử giao dịch đối soát ({payments.attempts.length}):</b>
+            <div style={{ maxHeight: '110px', overflowY: 'auto', marginTop: '4px', fontSize: '0.8rem', border: '1px solid var(--adm-border)', borderRadius: '8px', padding: '8px' }}>
+              {payments.attempts.map((a) => (
+                <div key={a.order_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px dashed var(--adm-border)' }}>
+                  <span><code>{a.order_id}</code> ({a.provider})</span>
+                  <span><b>{money(a.amount)}</b> · {a.status} {a.trans_id ? `(#${a.trans_id})` : ''}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {msg && <div className="admin-notice">{msg}</div>}
+
+        <div className="admin-form-actions" style={{ justifyContent: 'space-between' }}>
+          {booking.status !== 'Đã hủy' ? (
+            <button type="button" onClick={downloadEticket} disabled={downloading}>
+              <Download size={14} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+              {downloading ? 'Đang tạo PDF…' : 'Tải vé E-Ticket PDF (kèm QR)'}
+            </button>
+          ) : <span />}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button type="button" onClick={onClose}>Đóng</button>
+            <button type="button" className="primary" onClick={saveNote} disabled={savingNote}>
+              {savingNote ? 'Đang lưu…' : 'Lưu ghi chú'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+/* ------------------------------------------- PRODUCTION ADMIN DASHBOARD */
+const RANGE_OPTIONS = [
+  { id: 'today', label: 'Hôm nay' },
+  { id: '7d', label: '7 ngày qua' },
+  { id: '30d', label: '30 ngày qua' },
+  { id: 'month', label: 'Tháng này' },
+  { id: 'all', label: 'Toàn thời gian' },
+]
+
+const STATUS_BADGE_COLORS = {
+  pending: { bg: 'rgba(245, 158, 11, 0.16)', color: '#d97706', border: 'rgba(245, 158, 11, 0.35)' },
+  confirmed: { bg: 'rgba(59, 130, 246, 0.16)', color: '#2563eb', border: 'rgba(59, 130, 246, 0.35)' },
+  checked_in: { bg: 'rgba(16, 185, 129, 0.16)', color: '#059669', border: 'rgba(16, 185, 129, 0.35)' },
+  completed: { bg: 'rgba(139, 92, 246, 0.16)', color: '#7c3aed', border: 'rgba(139, 92, 246, 0.35)' },
+  cancelled: { bg: 'rgba(239, 68, 68, 0.16)', color: '#dc2626', border: 'rgba(239, 68, 68, 0.35)' },
+}
+
+const PAYMENT_BADGE_COLORS = {
+  pending: { bg: 'rgba(148, 163, 184, 0.18)', color: '#64748b', border: 'rgba(148, 163, 184, 0.35)' },
+  paid: { bg: 'rgba(16, 185, 129, 0.16)', color: '#059669', border: 'rgba(16, 185, 129, 0.35)' },
+  refund_pending: { bg: 'rgba(249, 115, 22, 0.18)', color: '#ea580c', border: 'rgba(249, 115, 22, 0.4)' },
+  refunded: { bg: 'rgba(239, 68, 68, 0.15)', color: '#dc2626', border: 'rgba(239, 68, 68, 0.35)' },
+}
+
+function DashboardSection({ call, onGoto }) {
+  const [range, setRange] = useState('30d')
+  const [overview, setOverview] = useState(null)
+  const [error, setError] = useState('')
+  const [showExportModal, setShowExportModal] = useState(false)
+  const [showQrModal, setShowQrModal] = useState(false)
+  const [detailBooking, setDetailBooking] = useState(null)
+  const [hoveredBar, setHoveredBar] = useState(null)
+  const { lastTelemetry, status: wsStatus, subscribe } = useRealtime()
+
+  const load = async (targetRange = range) => {
+    setError('')
+    const res = await call(`/api/admin/dashboard/overview?range=${encodeURIComponent(targetRange)}`)
+    if (!res.ok) {
+      setError(res.data?.error || 'Không tải được dữ liệu tổng quan vận hành.')
+      return
+    }
+    setOverview(res.data?.data || null)
+  }
+
+  useEffect(() => {
+    load(range)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range])
+
+  useEffect(() => {
+    if (!subscribe) return
+    const reload = () => load(range)
+    const u1 = subscribe('dashboard:update', reload)
+    const u2 = subscribe('booking:created', reload)
+    const u3 = subscribe('booking:updated', reload)
+    const u4 = subscribe('booking:cancelled', reload)
+    const u5 = subscribe('booking:checked_in', reload)
+    const u6 = subscribe('payment:received', reload)
+    return () => { u1?.(); u2?.(); u3?.(); u4?.(); u5?.(); u6?.() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subscribe, range])
+
+  if (error) return <ErrorBar message={error} onRetry={() => load(range)} />
+  if (!overview) return <div className="admin-loading">Đang tải dữ liệu vận hành thời gian thực…</div>
+
+  const { financial, ops, charts, system_health } = overview
+  const revChart = charts?.revenue_chart || []
+  const maxRev = Math.max(1, ...revChart.map((d) => d.net_revenue))
+  const maxOrd = Math.max(1, ...revChart.map((d) => d.orders_count))
+  const isLive = wsStatus === 'connected'
+
+  return (
+    <div className="admin-dashboard" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+      {/* 1. HEADER BAR: Tiêu đề + Bộ lọc thời gian + Live Indicator + Xuất Excel + Audit Logs */}
+      <section
+        className="admin-panel"
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '12px',
+          padding: '14px 18px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Tổng quan vận hành</h3>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '4px 10px',
+              borderRadius: '999px',
+              fontSize: '0.78rem',
+              fontWeight: 700,
+              background: isLive ? 'rgba(16, 185, 129, 0.14)' : 'rgba(245, 158, 11, 0.16)',
+              color: isLive ? '#10b981' : '#f59e0b',
+              border: `1px solid ${isLive ? 'rgba(16, 185, 129, 0.35)' : 'rgba(245, 158, 11, 0.35)'}`,
+            }}
+          >
+            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: isLive ? '#10b981' : '#f59e0b' }} />
+            {isLive ? 'LIVE REAL-TIME' : 'ĐANG KẾT NỐI'}
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'inline-flex', background: 'var(--adm-bg)', padding: '3px', borderRadius: '10px', border: '1px solid var(--adm-border)', gap: '3px' }}>
+            {RANGE_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setRange(opt.id)}
+                className={range === opt.id ? 'primary' : ''}
+                style={{
+                  padding: '5px 11px',
+                  fontSize: '0.8rem',
+                  borderRadius: '7px',
+                  border: 'none',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                {opt.label}
+              </button>
             ))}
           </div>
-        </section>
-      </div>
 
-      <section className="admin-panel admin-note">
-        <h3>Lưu ý về dữ liệu thanh toán</h3>
-        <p>{stats.revenueNote}</p>
-        <p>
-          Trang người dùng mô phỏng thanh toán (~700ms) — đơn được ghi <b>Đã xác nhận</b> kèm
-          trạng thái <b>Thanh toán mô phỏng (demo)</b>; không có giao dịch tiền thật nào được thực hiện.
-        </p>
-        <div style={{ display: 'flex', gap: '10px', marginTop: '1rem', flexWrap: 'wrap' }}>
-          <button type="button" onClick={() => onGoto('bookings')}>
-            Xem tất cả đơn <ArrowRight size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginLeft: 4 }} />
+          <button type="button" onClick={() => onGoto('audit-logs')} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.82rem' }}>
+            <FileText size={14} strokeWidth={1.8} /> Audit Logs
           </button>
-          <button type="button" onClick={() => onGoto('audit-logs')}>
-            <FileText size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Nhật ký hoạt động (Audit Logs)
-          </button>
-          <button type="button" className="primary" onClick={() => setShowExportModal(true)}>
-            <BarChart3 size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Xuất báo cáo Excel (.xlsx)
+          <button type="button" className="primary" onClick={() => setShowExportModal(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.82rem' }}>
+            <Download size={14} strokeWidth={1.8} /> Xuất báo cáo Excel (.xlsx)
           </button>
         </div>
       </section>
-      {showExportModal && <ExportExcelModal onClose={() => setShowExportModal(false)} />}
+
+      {/* 2. HÀNG 1 — 4 KPI TÀI CHÍNH THỰC (FINANCIAL KPIs) */}
+      <div className="admin-stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', marginBottom: 0 }}>
+        <div
+          className="admin-stat"
+          style={{
+            border: '1.5px solid rgba(16, 185, 129, 0.45)',
+            background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(14, 116, 144, 0.05))',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontWeight: 700, color: '#10b981' }}>Doanh thu thực (Net Revenue)</span>
+            <span
+              style={{
+                padding: '2px 8px',
+                borderRadius: '999px',
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                background: financial.growth_percent >= 0 ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+                color: financial.growth_percent >= 0 ? '#10b981' : '#ef4444',
+              }}
+            >
+              {financial.growth_percent >= 0 ? `+${financial.growth_percent}%` : `${financial.growth_percent}%`}
+            </span>
+          </div>
+          <strong style={{ fontSize: '1.55rem', color: '#10b981' }}>{money(financial.net_revenue)}</strong>
+          <small>{financial.valid_orders_count} đơn thực thu đã thanh toán & xác nhận</small>
+        </div>
+
+        <div className="admin-stat">
+          <span>Tổng giá trị đơn (GMV)</span>
+          <strong>{money(financial.gmv)}</strong>
+          <small>Tổng giá trị gốc trước khuyến mãi</small>
+        </div>
+
+        <div className="admin-stat">
+          <span>Tổng chiết khấu (Voucher)</span>
+          <strong style={{ color: '#f59e0b' }}>{money(financial.total_discount)}</strong>
+          <small>Mã giảm giá đã áp dụng cho đơn hợp lệ</small>
+        </div>
+
+        <div className="admin-stat">
+          <span>Tổng hoàn tiền (Refund)</span>
+          <strong style={{ color: financial.total_refund > 0 ? '#ef4444' : 'inherit' }}>{money(financial.total_refund)}</strong>
+          <small>{financial.refunded_orders_count || 0} đơn đã hoàn tiền cho khách</small>
+        </div>
+      </div>
+
+      {/* 3. HÀNG 2 — 4 THẺ CẦN XỬ LÝ NGAY (ACTIONABLE OPS CARDS) */}
+      <div className="admin-stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', marginBottom: 0 }}>
+        {/* Card 1: Chờ thanh toán / duyệt */}
+        <div
+          className="admin-stat"
+          onClick={() => onGoto('bookings', { status: 'Chờ thanh toán' })}
+          style={{ cursor: 'pointer', borderLeft: '4px solid #f59e0b' }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter') onGoto('bookings', { status: 'Chờ thanh toán' }) }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Chờ thanh toán / duyệt</span>
+            <ArrowRight size={14} />
+          </div>
+          <strong style={{ color: ops.pending_payment_count > 0 ? '#f59e0b' : 'inherit' }}>
+            {ops.pending_payment_count} đơn
+          </strong>
+          <small>Bấm để mở danh sách đơn đang giữ chỗ chờ duyệt</small>
+        </div>
+
+        {/* Card 2: Check-in hôm nay + Nút mở nhanh Quét QR */}
+        <div
+          className="admin-stat"
+          style={{ borderLeft: '4px solid #0284c7', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}
+        >
+          <div
+            onClick={() => onGoto('bookings', { status: 'Đã xác nhận' })}
+            style={{ cursor: 'pointer' }}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === 'Enter') onGoto('bookings', { status: 'Đã xác nhận' }) }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>Check-in hôm nay</span>
+              <ArrowRight size={14} />
+            </div>
+            <strong style={{ color: '#0284c7', display: 'block', margin: '4px 0' }}>
+              {ops.today_checkins_count} lượt
+            </strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+            <small>Lịch nhận phòng / khởi hành</small>
+            <button
+              type="button"
+              className="primary"
+              onClick={(e) => { e.stopPropagation(); setShowQrModal(true) }}
+              style={{ padding: '4px 9px', fontSize: '0.75rem', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+            >
+              <QrCode size={12} /> Quét QR
+            </button>
+          </div>
+        </div>
+
+        {/* Card 3: Chờ hoàn tiền (refund_pending) */}
+        <div
+          className="admin-stat"
+          onClick={() => onGoto('bookings', { paymentStatus: 'refund_pending' })}
+          style={{
+            cursor: 'pointer',
+            borderLeft: `4px solid ${ops.refund_pending_count > 0 ? '#ef4444' : '#64748b'}`,
+            background: ops.refund_pending_count > 0 ? 'rgba(239, 68, 68, 0.08)' : undefined,
+          }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter') onGoto('bookings', { paymentStatus: 'refund_pending' }) }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: ops.refund_pending_count > 0 ? '#ef4444' : undefined, fontWeight: ops.refund_pending_count > 0 ? 700 : undefined }}>
+              Chờ hoàn tiền (Refund)
+            </span>
+            <ArrowRight size={14} />
+          </div>
+          <strong style={{ color: ops.refund_pending_count > 0 ? '#ef4444' : 'inherit' }}>
+            {ops.refund_pending_count} đơn
+          </strong>
+          <small>
+            {ops.refund_pending_count > 0
+              ? 'Cần kế toán / Admin xác nhận hoàn tiền ngay'
+              : 'Không có đơn hủy tồn đọng chờ hoàn tiền'}
+          </small>
+        </div>
+
+        {/* Card 4: Sản phẩm đang mở bán & Cảnh báo tồn kho */}
+        <div
+          className="admin-stat"
+          onClick={() => onGoto(ops.low_inventory_alerts?.[0]?.type === 'flight' ? 'flights' : 'rooms')}
+          style={{ cursor: 'pointer', borderLeft: '4px solid #10b981' }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter') onGoto('rooms') }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Sản phẩm đang mở bán</span>
+            <ArrowRight size={14} />
+          </div>
+          <strong>
+            {ops.active_catalog?.hotels || 0} KS · {ops.active_catalog?.flights || 0} Bay · {ops.active_catalog?.combos || 0} Combo
+          </strong>
+          <small style={{ color: ops.low_inventory_alerts?.length > 0 ? '#f59e0b' : undefined }}>
+            {ops.low_inventory_alerts?.length > 0
+              ? `⚠️ ${ops.low_inventory_alerts.length} hạng phòng/chuyến bay sắp kín chỗ`
+              : `${ops.active_catalog?.rooms || 0} hạng phòng & ${ops.active_catalog?.promotions || 0} mã KM sẵn sàng`}
+          </small>
+        </div>
+      </div>
+
+      {/* 4. HÀNG 3 — BIỂU ĐỒ PHÂN TÍCH (2 CỘT TỶ LỆ 8 / 4) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.25rem' }}>
+        {/* Cột trái: Biểu đồ kết hợp Doanh thu thực & Số đơn mới theo ngày (có Tooltip) */}
+        <section className="admin-panel" style={{ gridColumn: 'span 2' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+            <div>
+              <h3 style={{ margin: 0 }}>Biểu đồ Doanh thu thực & Lưu lượng đơn theo ngày</h3>
+              <small style={{ opacity: 0.75 }}>Di chuột vào từng cột để xem chi tiết doanh thu thực nhận và số đơn đặt mới</small>
+            </div>
+            {hoveredBar ? (
+              <div
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '8px',
+                  background: 'var(--adm-bg)',
+                  border: '1px solid #10b981',
+                  fontSize: '0.8rem',
+                }}
+              >
+                <b>Ngày {hoveredBar.date}:</b> Doanh thu thực <b style={{ color: '#10b981' }}>{money(hoveredBar.net_revenue)}</b> · {hoveredBar.orders_count} đơn ({hoveredBar.paid_orders_count} đơn thực thu)
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: '12px', fontSize: '0.78rem' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                  <i style={{ width: 10, height: 10, borderRadius: 2, background: '#10b981', display: 'inline-block' }} /> Doanh thu thực
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                  <i style={{ width: 10, height: 10, borderRadius: 2, background: '#3b82f6', display: 'inline-block' }} /> Số đơn mới
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: `repeat(${Math.max(revChart.length, 1)}, minmax(22px, 1fr))`,
+              gap: '6px',
+              alignItems: 'end',
+              height: '190px',
+              padding: '16px 6px 4px',
+              borderBottom: '1px solid var(--adm-border)',
+            }}
+          >
+            {revChart.map((d) => {
+              const revPct = d.net_revenue > 0 ? Math.max(Math.round((d.net_revenue / maxRev) * 100), 8) : 2
+              const ordPct = d.orders_count > 0 ? Math.max(Math.round((d.orders_count / maxOrd) * 100), 10) : 2
+              const isHover = hoveredBar?.date === d.date
+              return (
+                <div
+                  key={d.date}
+                  onMouseEnter={() => setHoveredBar(d)}
+                  onMouseLeave={() => setHoveredBar(null)}
+                  title={`${d.date}\nDoanh thu thực: ${money(d.net_revenue)}\nSố đơn: ${d.orders_count}`}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    height: '100%',
+                    justifyContent: 'flex-end',
+                    cursor: 'pointer',
+                    background: isHover ? 'rgba(16, 185, 129, 0.08)' : 'transparent',
+                    borderRadius: '6px',
+                    padding: '2px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', width: '100%', height: '140px', justifyContent: 'center' }}>
+                    <span
+                      style={{
+                        width: '45%',
+                        maxWidth: '16px',
+                        height: `${revPct}%`,
+                        background: 'linear-gradient(180deg, #10b981, #059669)',
+                        borderRadius: '4px 4px 0 0',
+                        transition: 'height 0.2s',
+                      }}
+                    />
+                    <span
+                      style={{
+                        width: '35%',
+                        maxWidth: '12px',
+                        height: `${ordPct}%`,
+                        background: '#3b82f6',
+                        opacity: 0.85,
+                        borderRadius: '4px 4px 0 0',
+                        transition: 'height 0.2s',
+                      }}
+                    />
+                  </div>
+                  <small style={{ fontSize: '0.68rem', marginTop: '6px', opacity: 0.8, whiteSpace: 'nowrap' }}>{d.label}</small>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
+        {/* Cột phải: Phân bổ doanh thu theo dịch vụ & Trạng thái đơn */}
+        <section className="admin-panel" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div>
+            <h3 style={{ margin: '0 0 10px 0' }}>Tỷ trọng Doanh thu theo Dịch vụ</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {(charts?.service_breakdown || []).map((svc) => {
+                const barColor = svc.key === 'hotel' ? '#10b981' : svc.key === 'flight' ? '#3b82f6' : '#f59e0b'
+                return (
+                  <div key={svc.key}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.84rem', marginBottom: '4px' }}>
+                      <span><b>{svc.label}</b> ({svc.orders_count} đơn)</span>
+                      <span><b>{money(svc.revenue)}</b> ({svc.percent}%)</span>
+                    </div>
+                    <div style={{ height: '8px', borderRadius: '999px', background: 'var(--adm-bg)', overflow: 'hidden' }}>
+                      <div style={{ width: `${Math.min(svc.percent, 100)}%`, height: '100%', background: barColor, borderRadius: '999px' }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div style={{ borderTop: '1px solid var(--adm-border)', paddingTop: '12px' }}>
+            <h3 style={{ margin: '0 0 10px 0' }}>Phân bổ Trạng thái Đơn</h3>
+            <ul className="admin-status-list" style={{ margin: 0 }}>
+              {(charts?.status_breakdown || []).map((st) => {
+                const badgeStyle = STATUS_BADGE_COLORS[st.key] || STATUS_BADGE_COLORS.confirmed
+                return (
+                  <li key={st.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0' }}>
+                    <span
+                      style={{
+                        padding: '2px 8px',
+                        borderRadius: '6px',
+                        fontSize: '0.78rem',
+                        fontWeight: 700,
+                        background: badgeStyle.bg,
+                        color: badgeStyle.color,
+                        border: `1px solid ${badgeStyle.border}`,
+                      }}
+                    >
+                      {st.label}
+                    </span>
+                    <span style={{ fontSize: '0.82rem' }}><b>{st.count}</b> đơn ({st.percent}%)</span>
+                    <strong style={{ fontSize: '0.85rem' }}>{money(st.amount)}</strong>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        </section>
+      </div>
+
+      {/* 5. HÀNG 4 — BẢNG ĐƠN ĐẶT CHỖ GẦN NHẤT (2 BADGE TÁCH BIỆT) */}
+      <section className="admin-panel">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+          <div>
+            <h3 style={{ margin: 0 }}>Đơn đặt chỗ gần nhất</h3>
+            <small style={{ opacity: 0.75 }}>Cập nhật tức thì từ cơ sở dữ liệu — tách bạch rõ Trạng thái đơn và Trạng thái thanh toán</small>
+          </div>
+          <button type="button" onClick={() => onGoto('bookings', null)} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.82rem' }}>
+            Quản lý toàn bộ đơn <ArrowRight size={14} />
+          </button>
+        </div>
+
+        {(!charts?.recent_bookings || charts.recent_bookings.length === 0) ? (
+          <Empty text="Chưa có đơn đặt chỗ nào." />
+        ) : (
+          <div className="admin-table-wrap">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Mã đơn</th>
+                  <th>Khách hàng</th>
+                  <th>Dịch vụ</th>
+                  <th className="num">Tổng tiền</th>
+                  <th>Trạng thái đơn</th>
+                  <th>Thanh toán</th>
+                  <th>Thời gian tạo</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {charts.recent_bookings.map((b) => {
+                  const bStyle = STATUS_BADGE_COLORS[b.bookingStatusKey] || STATUS_BADGE_COLORS.confirmed
+                  const pStyle = PAYMENT_BADGE_COLORS[b.paymentStatusKey] || PAYMENT_BADGE_COLORS.pending
+                  return (
+                    <tr key={b.id}>
+                      <td><code>{b.code}</code></td>
+                      <td>
+                        <b>{b.traveler?.name}</b>
+                        <small>{b.traveler?.phone} · {b.traveler?.email || b.ownerEmail}</small>
+                      </td>
+                      <td>
+                        <b>{b.serviceType === 'flight' ? 'Chuyến bay' : b.serviceType === 'combo' ? 'Combo' : 'Khách sạn'}</b>
+                        <small>{b.title}</small>
+                      </td>
+                      <td className="num">
+                        <b>{money(b.total)}</b>
+                        {b.discount > 0 && <small>KM: -{money(b.discount)}</small>}
+                      </td>
+                      <td>
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            padding: '3px 9px',
+                            borderRadius: '6px',
+                            fontSize: '0.78rem',
+                            fontWeight: 700,
+                            background: bStyle.bg,
+                            color: bStyle.color,
+                            border: `1px solid ${bStyle.border}`,
+                          }}
+                        >
+                          {b.bookingStatusLabel}
+                        </span>
+                      </td>
+                      <td>
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            padding: '3px 9px',
+                            borderRadius: '6px',
+                            fontSize: '0.78rem',
+                            fontWeight: 700,
+                            background: pStyle.bg,
+                            color: pStyle.color,
+                            border: `1px solid ${pStyle.border}`,
+                          }}
+                        >
+                          {b.paymentStatusLabel}
+                        </span>
+                      </td>
+                      <td><small>{formatDate(b.createdAt)}</small></td>
+                      <td className="admin-actions">
+                        <button type="button" onClick={() => setDetailBooking(b)} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.8rem' }}>
+                          <Eye size={13} /> Chi tiết
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* 6. THANH SYSTEM HEALTH THU GỌN (FOOTER BAR) */}
+      <footer
+        className="admin-panel"
+        style={{
+          padding: '10px 16px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '12px',
+          fontSize: '0.8rem',
+          opacity: 0.9,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />
+          <b>System Health: {system_health?.status || 'Live'}</b>
+          <span>· WebSocket Clients: <b>{lastTelemetry?.realtime?.wsClients ?? 1}</b></span>
+        </div>
+        <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+          <span>RAM Heap/RSS: <b>{lastTelemetry?.process?.heapUsedMb ?? system_health?.heapUsedMb ?? 0} / {lastTelemetry?.process?.rssMb ?? system_health?.rssMb ?? 0} MB</b></span>
+          <span>CPU: <b>{lastTelemetry?.os?.cpuCores ?? system_health?.cpuCores ?? 1} Cores (Load {lastTelemetry?.os?.loadAvg?.[0] ?? system_health?.loadAvg ?? 0})</b></span>
+          <span>Uptime: <b>{Math.max(1, Math.floor((lastTelemetry?.process?.uptime ?? system_health?.uptimeSeconds ?? 60) / 60))} phút</b></span>
+        </div>
+      </footer>
+
+      {showExportModal && <ExportExcelModal defaultRange={range} onClose={() => setShowExportModal(false)} />}
+      {showQrModal && (
+        <AdminQrScannerModal
+          onClose={() => setShowQrModal(false)}
+          onSuccess={() => load(range)}
+        />
+      )}
+      {detailBooking && (
+        <BookingDetailModal
+          booking={detailBooking}
+          call={call}
+          onClose={() => setDetailBooking(null)}
+          onSaved={() => load(range)}
+        />
+      )}
     </div>
   )
 }
 
 /* ------------------------------------------------------------- bookings */
-// Đồ thị chuyển trạng thái — phải khớp với quy tắc phía server (routes-admin.js)
-// P1-01: Admin KHÔNG được tự chuyển sang 'Đã thanh toán' — trạng thái này chỉ được
-// hệ thống đặt sau khi cổng thanh toán (MoMo) xác minh giao dịch thành công.
 const ADMIN_TRANSITIONS = {
   'Đã tạo': ['Chờ thanh toán', 'Đã xác nhận', 'Đã hủy'],
   'Chờ thanh toán': ['Đã xác nhận', 'Đã hủy'],
-  'Đã thanh toán': ['Đã xác nhận', 'Đã hủy'],
-  'Đã xác nhận': ['Đã hủy'],
+  'Đã thanh toán': ['Đã xác nhận', 'checked_in', 'Đã hủy'],
+  'Đã xác nhận': ['checked_in', 'Hoàn tất', 'Đã hủy'],
+  'checked_in': ['Hoàn tất', 'Đã hủy'],
+  'Hoàn tất': [],
   'Đã hủy': [],
 }
 
-function BookingsSection({ call }) {
+function BookingsSection({ call, preset }) {
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [q, setQ] = useState('')
-  const [status, setStatus] = useState('all')
+  const [status, setStatus] = useState(preset?.status || 'all')
+  const [serviceType, setServiceType] = useState(preset?.serviceType || 'all')
+  const [paymentStatus, setPaymentStatus] = useState(preset?.paymentStatus || 'all')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [showExportModal, setShowExportModal] = useState(false)
-  const [paymentEdit, setPaymentEdit] = useState(null) // booking id đang chỉnh sửa thanh toán hoặc null
+  const [showQrModal, setShowQrModal] = useState(false)
+  const [detailBooking, setDetailBooking] = useState(null)
+  const [paymentEdit, setPaymentEdit] = useState(null)
   const [paymentReason, setPaymentReason] = useState('')
-  const [newPaymentStatus, setNewPaymentStatus] = useState('') // giá trị thanh toán đang chỉnh sửa
+  const [newPaymentStatus, setNewPaymentStatus] = useState('')
   const limit = 20
   const { subscribe } = useRealtime()
 
-  // Real-time listener: nhận đơn mới hoặc cập nhật đơn từ WebSocket
   useEffect(() => {
     const unsubCreated = subscribe('booking:created', ({ booking }) => {
       if (!booking) return
@@ -569,9 +1302,9 @@ function BookingsSection({ call }) {
       setNotice(`Đơn ${booking.code} vừa được cập nhật: ${booking.status}`)
     })
 
-    const unsubCancelled = subscribe('booking:cancelled', ({ code, status }) => {
+    const unsubCancelled = subscribe('booking:cancelled', ({ code, status: nextSt }) => {
       if (!code) return
-      setRows((prev) => prev.map((b) => (b.code === code ? { ...b, status: status || 'Đã hủy' } : b)))
+      setRows((prev) => prev.map((b) => (b.code === code ? { ...b, status: nextSt || 'Đã hủy' } : b)))
       setNotice(`Đơn ${code} đã bị hủy`)
     })
 
@@ -582,12 +1315,20 @@ function BookingsSection({ call }) {
     }
   }, [subscribe])
 
-  const load = async (nextPage = page, nextQ = q, nextStatus = status) => {
+  const load = async (
+    nextPage = page,
+    filters = { q, status, serviceType, paymentStatus, fromDate, toDate }
+  ) => {
     setLoading(true)
     setError('')
     const params = new URLSearchParams({ page: String(nextPage), limit: String(limit) })
-    if (nextQ.trim()) params.set('q', nextQ.trim())
-    if (nextStatus !== 'all') params.set('status', nextStatus)
+    if (filters.q?.trim()) params.set('q', filters.q.trim())
+    if (filters.status && filters.status !== 'all') params.set('status', filters.status)
+    if (filters.serviceType && filters.serviceType !== 'all') params.set('serviceType', filters.serviceType)
+    if (filters.paymentStatus && filters.paymentStatus !== 'all') params.set('paymentStatus', filters.paymentStatus)
+    if (filters.fromDate) params.set('fromDate', filters.fromDate)
+    if (filters.toDate) params.set('toDate', filters.toDate)
+
     const res = await call(`/api/admin/bookings?${params.toString()}`)
     setLoading(false)
     if (!res.ok) { setError(res.data?.error || 'Không tải được danh sách đơn.'); return }
@@ -596,54 +1337,104 @@ function BookingsSection({ call }) {
     setTotal(data.total || 0)
   }
 
-  useEffect(() => { load(1, '', 'all') }, []) // eslint-disable-line react-hooks/exhaustive-deps react/set-state-in-effect
-  const applyFilter = () => { setPage(1); load(1, q, status) }
+  useEffect(() => {
+    const initFilters = {
+      q: '',
+      status: preset?.status || 'all',
+      serviceType: preset?.serviceType || 'all',
+      paymentStatus: preset?.paymentStatus || 'all',
+      fromDate: '',
+      toDate: '',
+    }
+    setStatus(initFilters.status)
+    setServiceType(initFilters.serviceType)
+    setPaymentStatus(initFilters.paymentStatus)
+    load(1, initFilters)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset])
 
-  const changeStatus = async (booking, nextStatus) => {
-    const res = await call(`/api/admin/bookings/${booking.id}`, { method: 'PATCH', body: { status: nextStatus } })
-    if (!res.ok) { setError(res.data?.error || 'Không chuyển được trạng thái.'); return }
-    setNotice(`Đơn ${booking.code}: ${booking.status} -> ${nextStatus}`)
-    load()
+  const applyFilter = () => {
+    setPage(1)
+    load(1, { q, status, serviceType, paymentStatus, fromDate, toDate })
   }
 
-  // P1-01: Ghi nhận thủ công trạng thái thanh toán (pending/simulated/refunded) —
-  // KHÔNG bao gồm 'paid'. Bắt buộc lý do, ghi audit log ở server.
+  const changeStatus = async (booking, nextStatus) => {
+    if (nextStatus === booking.status) return
+    let cancelReason = ''
+    if (nextStatus === 'Đã hủy') {
+      const inputReason = window.prompt(
+        `Nhập lý do hủy đơn ${booking.code} (Hệ thống sẽ tự động hoàn lại phòng/ghế đã giữ & ghi Audit Log):`,
+        'Khách hàng yêu cầu hủy / Thay đổi lịch trình'
+      )
+      if (inputReason === null) return
+      cancelReason = inputReason.trim() || 'Hủy bởi quản trị viên'
+    }
+    const res = await call(`/api/admin/bookings/${booking.id}`, {
+      method: 'PATCH',
+      body: { status: nextStatus, cancelReason },
+    })
+    if (!res.ok) { setError(res.data?.error || 'Không chuyển được trạng thái.'); return }
+    setNotice(`Đơn ${booking.code}: ${booking.status} -> ${nextStatus}`)
+    load(page)
+  }
+
   const changePaymentStatus = async (booking, nextPayment) => {
-    if (!paymentReason.trim()) { setError('Bắt buộc nhập lý do khi thay đổi trạng thái thanh toán.'); return }
+    if (!paymentReason.trim() || paymentReason.trim().length < 5) {
+      setError('Bắt buộc nhập lý do tối thiểu 5 ký tự khi cập nhật trạng thái thanh toán/hoàn tiền.')
+      return
+    }
     const res = await call(`/api/admin/bookings/${booking.id}`, {
       method: 'PATCH',
       body: { paymentStatus: nextPayment, paymentReason: paymentReason.trim() },
     })
     if (!res.ok) { setError(res.data?.error || 'Không cập nhật được trạng thái thanh toán.'); return }
-    setNotice(`Đơn ${booking.code}: thanh toán -> ${nextPayment}`)
+    setNotice(`Đơn ${booking.code}: thanh toán -> ${PAYMENT_LABELS[nextPayment] || nextPayment}`)
     setPaymentEdit(null)
     setPaymentReason('')
-    load()
+    load(page)
   }
 
   const totalPages = Math.max(1, Math.ceil(total / limit))
 
   return (
     <div className="admin-section">
-      <div className="admin-toolbar">
+      <div className="admin-toolbar" style={{ flexWrap: 'wrap', gap: '8px' }}>
         <input
           className="admin-search" value={q} maxLength={120}
-          placeholder="Tìm mã đơn, tên người đặt, email, tên dịch vụ…"
+          placeholder="Tìm mã đơn, tên, SĐT, email khách, dịch vụ…"
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') applyFilter() }}
         />
+        <select value={serviceType} onChange={(e) => setServiceType(e.target.value)}>
+          <option value="all">Tất cả dịch vụ</option>
+          <option value="hotel">Khách sạn</option>
+          <option value="flight">Chuyến bay</option>
+          <option value="combo">Combo</option>
+        </select>
         <select value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="all">Tất cả trạng thái</option>
+          <option value="all">Tất cả trạng thái đơn</option>
           {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
+        <select value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>
+          <option value="all">Tất cả thanh toán</option>
+          <option value="paid">Đã thanh toán</option>
+          <option value="pending">Chờ thanh toán</option>
+          <option value="refund_pending">Chờ hoàn tiền</option>
+          <option value="refunded">Đã hoàn tiền</option>
+        </select>
+        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} title="Từ ngày đặt" />
+        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} title="Đến ngày đặt" />
         <button type="button" className="primary" onClick={applyFilter}>Lọc</button>
+        <button type="button" onClick={() => setShowQrModal(true)}>
+          <QrCode size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Quét QR Check-in
+        </button>
         <button type="button" onClick={() => setShowExportModal(true)}>
           <BarChart3 size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Xuất Excel
         </button>
         <span className="admin-count">{total} đơn</span>
       </div>
 
-      <ErrorBar message={error} onRetry={() => load()} />
+      <ErrorBar message={error} onRetry={() => load(page)} />
       {notice && <div className="admin-notice" role="status">{notice}</div>}
 
       {loading ? <div className="admin-loading">Đang tải…</div>
@@ -654,27 +1445,38 @@ function BookingsSection({ call }) {
                 <thead>
                   <tr>
                     <th>Mã đơn</th>
-                    <th>Dịch vụ</th>
-                    <th>Chủ đơn</th>
+                    <th>Dịch vụ & Phòng/Ghế</th>
+                    <th>Khách hàng</th>
                     <th>Tổng tiền</th>
-                    <th>Trạng thái</th>
+                    <th>Trạng thái đơn</th>
                     <th>Thanh toán</th>
                     <th>Ngày tạo</th>
-                    <th />
+                    <th>Thao tác</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((b) => {
-                    const options = [b.status, ...(ADMIN_TRANSITIONS[b.status] || [])]
+                    const options = Array.from(new Set([b.status, ...(ADMIN_TRANSITIONS[b.status] || [])]))
                     return (
                       <tr key={b.id}>
-                        <td><code>{b.code}</code></td>
+                        <td>
+                          <code>{b.code}</code>
+                          {b.internalNote && <small style={{ color: '#0284c7', display: 'block' }}>📝 Có ghi chú</small>}
+                        </td>
                         <td>
                           <b>{b.serviceType === 'flight' ? 'Vé máy bay' : b.serviceType === 'hotel' ? 'Khách sạn' : 'Combo'}</b>
                           <small>{b.title}</small>
-                          <small>{b.traveler.name} · {b.traveler.phone} · {b.passengers} khách</small>
+                          {(b.roomName || b.seatCode) && (
+                            <small style={{ color: '#10b981' }}>
+                              {b.roomName ? `Phòng: ${b.roomName}` : ''} {b.seatCode ? `Ghế: ${b.seatCode}` : ''}
+                            </small>
+                          )}
                         </td>
-                        <td>{b.ownerEmail}<small>{b.traveler.email}</small></td>
+                        <td>
+                          <b>{b.traveler.name}</b>
+                          <small>{b.traveler.phone} · {b.passengers} khách</small>
+                          <small>{b.traveler.email || b.ownerEmail}</small>
+                        </td>
                         <td className="num">
                           <b>{money(b.total)}</b>
                           {b.discount > 0 && <small>giảm {money(b.discount)} ({b.promo})</small>}
@@ -683,6 +1485,7 @@ function BookingsSection({ call }) {
                           <select value={b.status} onChange={(e) => changeStatus(b, e.target.value)}>
                             {options.map((s) => <option key={s} value={s}>{s}</option>)}
                           </select>
+                          {b.cancelReason && <small style={{ color: '#ef4444', display: 'block' }}>Lý do: {b.cancelReason}</small>}
                         </td>
                         <td>
                           {paymentEdit === b.id ? (
@@ -691,14 +1494,14 @@ function BookingsSection({ call }) {
                                 value={newPaymentStatus}
                                 onChange={(e) => setNewPaymentStatus(e.target.value)}
                               >
-                                {['pending', 'simulated', 'refunded'].map((p) => (
+                                {['pending', 'refund_pending', 'refunded'].map((p) => (
                                   <option key={p} value={p}>{PAYMENT_LABELS[p]}</option>
                                 ))}
                               </select>
                               <textarea
                                 value={paymentReason}
                                 onChange={(e) => setPaymentReason(e.target.value)}
-                                placeholder="Lý do thay đổi…"
+                                placeholder="Lý do hoàn tiền/đối soát…"
                                 rows={1}
                                 style={{ width: '100%', fontSize: '12px' }}
                               />
@@ -716,23 +1519,29 @@ function BookingsSection({ call }) {
                             </div>
                           ) : (
                             <>
-                              <span className={`admin-tag ${b.paymentStatus === 'paid' ? 'ok' : b.paymentStatus === 'simulated' ? 'warn' : ''}`}>
+                              <span className={`admin-tag ${b.paymentStatus === 'paid' ? 'ok' : b.paymentStatus === 'refund_pending' ? 'warn' : b.paymentStatus === 'refunded' ? 'danger' : ''}`}>
                                 {PAYMENT_LABELS[b.paymentStatus] || b.paymentStatus}
                               </span>
-                              <small>{b.paymentMethod || '—'}</small>
+                              <small>{b.paymentMethod || 'Chuyển khoản / Ví'}</small>
                               <button
                                 type="button"
-                                onClick={() => { setPaymentEdit(b.id); setNewPaymentStatus(b.paymentStatus); setPaymentReason('') }}
-                                className="danger"
+                                onClick={() => {
+                                  setPaymentEdit(b.id)
+                                  setNewPaymentStatus(b.paymentStatus === 'refund_pending' ? 'refunded' : 'refunded')
+                                  setPaymentReason('Hoàn tiền theo yêu cầu hủy đơn hợp lệ')
+                                }}
                                 style={{ marginTop: '4px', fontSize: '11px', padding: '2px 8px' }}
                               >
-                                Sửa thanh toán
+                                {b.paymentStatus === 'refund_pending' ? 'Duyệt hoàn tiền' : 'Cập nhật TT'}
                               </button>
                             </>
                           )}
                         </td>
                         <td>{formatDate(b.createdAt)}</td>
-                        <td>
+                        <td className="admin-actions">
+                          <button type="button" onClick={() => setDetailBooking(b)}>
+                            <Eye size={13} style={{ verticalAlign: 'middle', marginRight: 3 }} /> Chi tiết
+                          </button>
                           <button
                             type="button"
                             className="danger"
@@ -760,24 +1569,137 @@ function BookingsSection({ call }) {
         </button>
       </div>
       {showExportModal && <ExportExcelModal onClose={() => setShowExportModal(false)} />}
+      {showQrModal && <AdminQrScannerModal onClose={() => setShowQrModal(false)} onSuccess={() => load(page)} />}
+      {detailBooking && (
+        <BookingDetailModal
+          booking={detailBooking}
+          call={call}
+          onClose={() => setDetailBooking(null)}
+          onSaved={() => load(page)}
+        />
+      )}
     </div>
   )
 }
 
+/* ------------------------------------------- Flight Seat Map Modal (Admin) */
+function FlightSeatMapModal({ flight, call, onClose, onUpdated }) {
+  const [seats, setSeats] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [toggling, setToggling] = useState('')
+
+  const loadSeats = async () => {
+    setLoading(true)
+    const res = await call(`/api/admin/flights/${flight.id}/seats`)
+    setLoading(false)
+    if (res.ok && Array.isArray(res.data?.data?.seats)) {
+      setSeats(res.data.data.seats)
+    }
+  }
+
+  useEffect(() => {
+    loadSeats()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flight.id])
+
+  const toggleSeat = async (seat) => {
+    setToggling(seat.seat_code)
+    const nextStatus = seat.status === 'available' ? 'booked' : 'available'
+    const res = await call(`/api/admin/flights/${flight.id}/seats/${seat.seat_code}`, {
+      method: 'PATCH',
+      body: { status: nextStatus },
+    })
+    setToggling('')
+    if (res.ok) {
+      setSeats((prev) => prev.map((s) => (s.seat_code === seat.seat_code ? { ...s, status: nextStatus } : s)))
+      onUpdated?.()
+    }
+  }
+
+  const availCount = seats.filter((s) => s.status === 'available').length
+  const bookedCount = seats.length - availCount
+
+  return (
+    <Modal title={`Sơ đồ ghế chuyến bay: ${flight.airline} (${flight.flightCode || flight.id})`} onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
+          <span>Tuyến: <b>{flight.from} → {flight.to}</b> ({flight.depart} – {flight.arrive})</span>
+          <span>
+            <b style={{ color: '#10b981' }}>{availCount} ghế trống</b> · <b style={{ color: '#ef4444' }}>{bookedCount} đã đặt/khóa</b>
+          </span>
+        </div>
+        <small style={{ opacity: 0.75 }}>Bấm vào ghế bất kỳ để Khóa / Mở khóa ghế trực tiếp trên SQLite (tự động ghi Audit Log)</small>
+
+        {loading ? (
+          <div className="admin-loading">Đang tải sơ đồ ghế…</div>
+        ) : (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(6, 1fr)',
+              gap: '6px',
+              maxHeight: '360px',
+              overflowY: 'auto',
+              padding: '10px',
+              borderRadius: '10px',
+              background: 'var(--adm-panel)',
+              border: '1px solid var(--adm-border)',
+            }}
+          >
+            {seats.map((s) => {
+              const isAvail = s.status === 'available'
+              return (
+                <button
+                  key={s.seat_code}
+                  type="button"
+                  disabled={toggling === s.seat_code}
+                  onClick={() => toggleSeat(s)}
+                  style={{
+                    padding: '7px 4px',
+                    borderRadius: '6px',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    border: `1px solid ${isAvail ? 'rgba(16,185,129,0.4)' : 'rgba(239,68,68,0.4)'}`,
+                    background: isAvail ? 'rgba(16,185,129,0.14)' : 'rgba(239,68,68,0.18)',
+                    color: isAvail ? '#10b981' : '#ef4444',
+                  }}
+                >
+                  {s.seat_code}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
 /* -------------------------------------------------- hotels & flights CRUD */
+const FLIGHT_STATUS_LABELS = {
+  scheduled: 'Đúng giờ (Scheduled)',
+  boarding: 'Đang lên tàu (Boarding)',
+  departed: 'Đã khởi hành (Departed)',
+  cancelled: 'Đã hủy chuyến (Cancelled)',
+}
+
 function CatalogCrudSection({ kind, call }) {
   const isHotel = kind === 'hotels'
   const [rows, setRows] = useState([])
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [form, setForm] = useState(null) // null = đóng modal; object = đang tạo/sửa
-  const [editing, setEditing] = useState(null) // null = tạo mới
+  const [form, setForm] = useState(null)
+  const [editing, setEditing] = useState(null)
+  const [seatMapFlight, setSeatMapFlight] = useState(null)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
 
   const emptyForm = () => (isHotel
-    ? { name: '', location: '', rating: '', stars: '5', price: '', hasPromo: false, image: '', description: '', perks: '', isActive: true }
-    : { airline: '', logo: '', from: '', to: '', depart: '07:00', arrive: '09:00', duration: '2h 00m', price: '', tag: '', hasPromo: false, isActive: true })
+    ? { name: '', location: '', city: '', lat: '', lng: '', rating: '9.0', stars: '5', price: '', hasPromo: false, image: '', description: '', perks: '', isActive: true }
+    : { flightCode: '', airline: '', logo: 'VN', from: '', to: '', depart: '07:00', arrive: '09:00', duration: '2h 00m', price: '', businessPrice: '', totalSeats: '72', flightStatus: 'scheduled', cutoffHours: '2', tag: '', hasPromo: false, isActive: true })
 
   const load = async () => {
     setError('')
@@ -786,7 +1708,7 @@ function CatalogCrudSection({ kind, call }) {
     setRows(Array.isArray(res.data?.data) ? res.data.data : [])
   }
 
-  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps react/set-state-in-effect
+  useEffect(() => { load() }, [kind]) // eslint-disable-line react-hooks/exhaustive-deps
   const openCreate = () => { setEditing(null); setFormError(''); setForm(emptyForm()) }
 
   const openEdit = (row) => {
@@ -794,13 +1716,20 @@ function CatalogCrudSection({ kind, call }) {
     setFormError('')
     setForm(isHotel
       ? {
-        name: row.name, location: row.location, rating: String(row.rating), stars: String(row.stars),
+        name: row.name, location: row.location, city: row.city || row.location || '',
+        lat: row.lat == null ? '' : String(row.lat), lng: row.lng == null ? '' : String(row.lng),
+        rating: String(row.rating), stars: String(row.stars),
         price: String(row.price), hasPromo: row.hasPromo, image: row.image || '',
         description: row.description || '', perks: (row.perks || []).join(', '), isActive: row.isActive,
       }
       : {
-        airline: row.airline, logo: row.logo || '', from: row.from, to: row.to, depart: row.depart,
-        arrive: row.arrive, duration: row.duration, price: String(row.price), tag: row.tag || '',
+        flightCode: row.flightCode || '', airline: row.airline, logo: row.logo || '', from: row.from, to: row.to, depart: row.depart,
+        arrive: row.arrive, duration: row.duration, price: String(row.price),
+        businessPrice: String(row.businessPrice || Math.round(row.price * 1.8)),
+        totalSeats: String(row.totalSeats || 72),
+        flightStatus: row.flightStatus || 'scheduled',
+        cutoffHours: String(row.cutoffHours ?? 2),
+        tag: row.tag || '',
         hasPromo: row.hasPromo, isActive: row.isActive,
       })
   }
@@ -812,22 +1741,31 @@ function CatalogCrudSection({ kind, call }) {
     const numericPrice = Number(String(form.price).replace(/[^\d]/g, ''))
     const body = isHotel
       ? {
-        name: form.name, location: form.location, rating: Number(form.rating),
+        name: form.name, location: form.location, city: form.city || form.location,
+        lat: form.lat === '' ? null : Number(form.lat),
+        lng: form.lng === '' ? null : Number(form.lng),
+        rating: Number(form.rating),
         stars: Number(form.stars), price: numericPrice, hasPromo: form.hasPromo,
         image: form.image, description: form.description,
         perks: String(form.perks || '').split(',').map((s) => s.trim()).filter(Boolean),
         isActive: form.isActive,
       }
       : {
+        flightCode: form.flightCode,
         airline: form.airline, logo: form.logo, from: form.from, to: form.to,
         depart: form.depart, arrive: form.arrive, duration: form.duration,
-        price: numericPrice, tag: form.tag, hasPromo: form.hasPromo, isActive: form.isActive,
+        price: numericPrice,
+        businessPrice: form.businessPrice ? Number(String(form.businessPrice).replace(/[^\d]/g, '')) : Math.round(numericPrice * 1.8),
+        totalSeats: Number(form.totalSeats) || 72,
+        flightStatus: form.flightStatus || 'scheduled',
+        cutoffHours: Number(form.cutoffHours) || 2,
+        tag: form.tag, hasPromo: form.hasPromo, isActive: form.isActive,
       }
     const path = editing ? `/api/admin/${kind}/${editing.id}` : `/api/admin/${kind}`
     const res = await call(path, { method: editing ? 'PATCH' : 'POST', body })
     setSaving(false)
     if (!res.ok) { setFormError(res.data?.error || 'Không lưu được dữ liệu.'); return }
-    setNotice(editing ? 'Đã cập nhật.' : 'Đã tạo mới.')
+    setNotice(editing ? 'Đã cập nhật thành công.' : 'Đã tạo mới thành công.')
     setForm(null)
     setEditing(null)
     load()
@@ -836,70 +1774,141 @@ function CatalogCrudSection({ kind, call }) {
   const toggleActive = async (row) => {
     const res = await call(`/api/admin/${kind}/${row.id}`, { method: 'PATCH', body: { isActive: !row.isActive } })
     if (!res.ok) { setError(res.data?.error || 'Không đổi được trạng thái.'); return }
-    setNotice(`${row.name || row.airline}: ${row.isActive ? 'ngừng kinh doanh' : 'bán lại'}.`)
+    setNotice(`${row.name || row.airline}: ${row.isActive ? 'đã chuyển sang Ẩn (Ngừng bán)' : 'đã mở bán lại'}.`)
     load()
   }
 
+  const softDelete = async (row) => {
+    if (!window.confirm(`Xác nhận ẩn/ngừng kinh doanh "${row.name || row.airline}"? Hệ thống sẽ bảo toàn lịch sử đơn đặt và phòng liên kết.`)) return
+    const res = await call(`/api/admin/${kind}/${row.id}`, { method: 'DELETE' })
+    if (!res.ok) { setError(res.data?.error || 'Không thực hiện được thao tác.'); return }
+    setNotice(res.data?.data?.message || `Đã chuyển ${row.name || row.airline} sang trạng thái Ẩn (Ngừng bán).`)
+    load()
+  }
+
+  const filteredRows = rows.filter((r) => {
+    if (statusFilter === 'active' && !r.isActive) return false
+    if (statusFilter === 'inactive' && r.isActive) return false
+    if (!search.trim()) return true
+    const q = search.trim().toLowerCase()
+    return isHotel
+      ? (r.name?.toLowerCase().includes(q) || r.location?.toLowerCase().includes(q))
+      : (r.airline?.toLowerCase().includes(q) || r.from?.toLowerCase().includes(q) || r.to?.toLowerCase().includes(q) || r.flightCode?.toLowerCase().includes(q))
+  })
+
   return (
     <div className="admin-section">
-      <div className="admin-toolbar">
+      <div className="admin-toolbar" style={{ flexWrap: 'wrap', gap: '8px' }}>
+        <input
+          className="admin-search"
+          placeholder={isHotel ? 'Tìm tên khách sạn, địa điểm, thành phố…' : 'Tìm hãng bay, mã chuyến, sân bay đi/đến…'}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option value="all">Tất cả trạng thái ({rows.length})</option>
+          <option value="active">Đang mở bán (Active)</option>
+          <option value="inactive">Đã ẩn / Ngừng bán (Hidden)</option>
+        </select>
         <button type="button" className="primary" onClick={openCreate}>
           + Thêm {isHotel ? 'khách sạn' : 'chuyến bay'}
         </button>
-        <span className="admin-count">{rows.length} bản ghi</span>
+        <span className="admin-count">{filteredRows.length} bản ghi</span>
       </div>
 
       <ErrorBar message={error} onRetry={load} />
       {notice && <div className="admin-notice" role="status">{notice}</div>}
 
-      {rows.length === 0 ? <Empty text="Chưa có dữ liệu." /> : (
+      {filteredRows.length === 0 ? <Empty text="Không có dữ liệu khớp bộ lọc." /> : (
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead>
               <tr>
-                <th>{isHotel ? 'Khách sạn' : 'Chuyến bay'}</th>
-                <th>{isHotel ? 'Địa điểm' : 'Tuyến'}</th>
-                <th>{isHotel ? 'Đánh giá' : 'Giờ bay'}</th>
-                <th>Giá</th>
-                <th>Khuyến mãi</th>
+                <th>{isHotel ? 'Khách sạn' : 'Chuyến bay & Mã chuyến'}</th>
+                <th>{isHotel ? 'Địa điểm / Tọa độ' : 'Tuyến bay'}</th>
+                <th>{isHotel ? 'Hạng sao & Đánh giá' : 'Giờ bay & Trạng thái'}</th>
+                <th>{isHotel ? 'Giá / đêm' : 'Giá Phổ thông / Thương gia'}</th>
+                <th>{isHotel ? 'Tiện ích' : 'Tồn kho ghế'}</th>
                 <th>Trạng thái</th>
-                <th />
+                <th>Thao tác</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {filteredRows.map((row) => (
                 <tr key={row.id} className={row.isActive ? '' : 'muted'}>
                   <td>
-                    <b>{isHotel ? row.name : `${row.airline} (${row.id})`}</b>
-                    <small>{isHotel ? row.description : `${row.logo} · ${row.duration}`}</small>
+                    <b>{isHotel ? row.name : `${row.airline} (${row.flightCode || row.id})`}</b>
+                    <small>{isHotel ? row.description : `${row.logo} · Thời lượng ${row.duration} · Đóng quầy trước ${row.cutoffHours ?? 2}h`}</small>
                   </td>
-                  <td>{isHotel ? row.location : `${row.from} - ${row.to}`}</td>
+                  <td>
+                    {isHotel ? (
+                      <>
+                        <b>{row.location}</b>
+                        {row.lat && row.lng && <small>GPS: {row.lat}, {row.lng}</small>}
+                      </>
+                    ) : (
+                      <b>{row.from} → {row.to}</b>
+                    )}
+                  </td>
                   <td>
                     {isHotel ? (
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                        {row.rating} <Star size={12} strokeWidth={1.8} fill="currentColor" /> / {row.stars} sao
+                        <b>{row.rating}</b> <Star size={12} strokeWidth={1.8} fill="currentColor" /> · {row.stars} sao
                       </span>
                     ) : (
-                      `${row.depart} – ${row.arrive}`
+                      <>
+                        <b>{row.depart} – {row.arrive}</b>
+                        <small>{FLIGHT_STATUS_LABELS[row.flightStatus] || row.flightStatus || 'Đúng giờ'}</small>
+                      </>
                     )}
                   </td>
-                  <td className="num"><b>{money(row.price)}</b></td>
-                  <td>{row.hasPromo ? 'Có' : '—'}</td>
+                  <td className="num">
+                    <b>{money(row.price)}</b>
+                    {!isHotel && row.businessPrice && <small>Thương gia: {money(row.businessPrice)}</small>}
+                  </td>
+                  <td>
+                    {isHotel ? (
+                      <small>{(row.perks || []).slice(0, 3).join(', ') || '—'}</small>
+                    ) : (
+                      <span className={`admin-tag ${(row.availableSeats ?? 72) <= 10 ? 'warn' : 'ok'}`}>
+                        {row.availableSeats ?? 72}/{row.totalSeats ?? 72} ghế trống
+                      </span>
+                    )}
+                  </td>
                   <td>
                     <Toggle
                       checked={row.isActive}
                       onChange={() => toggleActive(row)}
-                      labelOn="Đang bán" labelOff="Ngừng bán"
+                      labelOn="Đang bán" labelOff="Đã ẩn"
                     />
                   </td>
                   <td className="admin-actions">
+                    {!isHotel && (
+                      <button type="button" onClick={() => setSeatMapFlight(row)} title="Xem & Khóa sơ đồ ghế">
+                        <Grid size={13} style={{ verticalAlign: 'middle', marginRight: 3 }} /> Sơ đồ ghế
+                      </button>
+                    )}
                     <button type="button" onClick={() => openEdit(row)}>Sửa</button>
+                    {row.isActive && (
+                      <button type="button" className="danger" onClick={() => softDelete(row)}>
+                        Ẩn
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      )}
+
+      {seatMapFlight && (
+        <FlightSeatMapModal
+          flight={seatMapFlight}
+          call={call}
+          onClose={() => setSeatMapFlight(null)}
+          onUpdated={load}
+        />
       )}
 
       {form && (
@@ -911,34 +1920,48 @@ function CatalogCrudSection({ kind, call }) {
             {isHotel ? (
               <>
                 <Field label="Tên khách sạn"><input value={form.name} maxLength={120} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-                <Field label="Địa điểm"><input value={form.location} maxLength={120} onChange={(e) => setForm({ ...form, location: e.target.value })} /></Field>
+                <Field label="Địa chỉ / Thành phố"><input value={form.location} maxLength={120} onChange={(e) => setForm({ ...form, location: e.target.value, city: e.target.value })} /></Field>
                 <Field label="Điểm đánh giá (0–10)"><input value={form.rating} inputMode="decimal" onChange={(e) => setForm({ ...form, rating: e.target.value })} /></Field>
-                <Field label="Số sao (1–5)"><input value={form.stars} inputMode="numeric" onChange={(e) => setForm({ ...form, stars: e.target.value })} /></Field>
-                <Field label="Giá / đêm (₫)"><input value={form.price} inputMode="numeric" onChange={(e) => setForm({ ...form, price: e.target.value })} /></Field>
-                <Field label="Tiện ích (cách nhau dấu phẩy)"><input value={form.perks} maxLength={200} onChange={(e) => setForm({ ...form, perks: e.target.value })} /></Field>
-                <Field label="Ảnh (URL hoặc gradient)" wide><input value={form.image} maxLength={800} onChange={(e) => setForm({ ...form, image: e.target.value })} /></Field>
-                <Field label="Mô tả" wide><textarea value={form.description} maxLength={600} rows={3} onChange={(e) => setForm({ ...form, description: e.target.value })} /></Field>
+                <Field label="Hạng sao (1–5)"><input value={form.stars} inputMode="numeric" onChange={(e) => setForm({ ...form, stars: e.target.value })} /></Field>
+                <Field label="Giá chuẩn / đêm (₫)"><input value={form.price} inputMode="numeric" onChange={(e) => setForm({ ...form, price: e.target.value })} /></Field>
+                <Field label="Tiện ích (tags, cách nhau dấu phẩy)"><input value={form.perks} maxLength={250} onChange={(e) => setForm({ ...form, perks: e.target.value })} /></Field>
+                <Field label="Vĩ độ GPS (Lat - tùy chọn)"><input value={form.lat} placeholder="16.0544" onChange={(e) => setForm({ ...form, lat: e.target.value })} /></Field>
+                <Field label="Kinh độ GPS (Lng - tùy chọn)"><input value={form.lng} placeholder="108.2022" onChange={(e) => setForm({ ...form, lng: e.target.value })} /></Field>
+                <Field label="Ảnh đại diện (URL)" wide><input value={form.image} maxLength={800} onChange={(e) => setForm({ ...form, image: e.target.value })} /></Field>
+                <Field label="Mô tả chi tiết" wide><textarea value={form.description} maxLength={600} rows={3} onChange={(e) => setForm({ ...form, description: e.target.value })} /></Field>
               </>
             ) : (
               <>
-                <Field label="Hãng bay"><input value={form.airline} maxLength={60} onChange={(e) => setForm({ ...form, airline: e.target.value })} /></Field>
-                <Field label="Mã hiệu (logo)"><input value={form.logo} maxLength={6} onChange={(e) => setForm({ ...form, logo: e.target.value })} /></Field>
+                <Field label="Hãng hàng không"><input value={form.airline} maxLength={60} onChange={(e) => setForm({ ...form, airline: e.target.value })} /></Field>
+                <Field label="Mã chuyến bay"><input value={form.flightCode} maxLength={20} placeholder="VN-218" onChange={(e) => setForm({ ...form, flightCode: e.target.value.toUpperCase() })} /></Field>
+                <Field label="Mã hiệu hãng (Logo)"><input value={form.logo} maxLength={6} onChange={(e) => setForm({ ...form, logo: e.target.value.toUpperCase() })} /></Field>
+                <Field label="Trạng thái vận hành">
+                  <select value={form.flightStatus} onChange={(e) => setForm({ ...form, flightStatus: e.target.value })}>
+                    <option value="scheduled">Đúng giờ (Scheduled)</option>
+                    <option value="boarding">Đang lên tàu (Boarding)</option>
+                    <option value="departed">Đã khởi hành (Departed)</option>
+                    <option value="cancelled">Đã hủy chuyến (Cancelled)</option>
+                  </select>
+                </Field>
                 <Field label="Sân bay đi"><input value={form.from} maxLength={60} onChange={(e) => setForm({ ...form, from: e.target.value })} /></Field>
                 <Field label="Sân bay đến"><input value={form.to} maxLength={60} onChange={(e) => setForm({ ...form, to: e.target.value })} /></Field>
-                <Field label="Giờ đi (HH:MM)"><input value={form.depart} maxLength={5} onChange={(e) => setForm({ ...form, depart: e.target.value })} /></Field>
-                <Field label="Giờ đến (HH:MM)"><input value={form.arrive} maxLength={5} onChange={(e) => setForm({ ...form, arrive: e.target.value })} /></Field>
-                <Field label="Thời lượng"><input value={form.duration} maxLength={24} onChange={(e) => setForm({ ...form, duration: e.target.value })} /></Field>
-                <Field label="Giá vé (₫)"><input value={form.price} inputMode="numeric" onChange={(e) => setForm({ ...form, price: e.target.value })} /></Field>
-                <Field label="Nhãn (tag)"><input value={form.tag} maxLength={40} onChange={(e) => setForm({ ...form, tag: e.target.value })} /></Field>
+                <Field label="Giờ khởi hành (HH:MM)"><input value={form.depart} maxLength={5} onChange={(e) => setForm({ ...form, depart: e.target.value })} /></Field>
+                <Field label="Giờ hạ cánh (HH:MM)"><input value={form.arrive} maxLength={5} onChange={(e) => setForm({ ...form, arrive: e.target.value })} /></Field>
+                <Field label="Thời lượng bay"><input value={form.duration} maxLength={24} onChange={(e) => setForm({ ...form, duration: e.target.value })} /></Field>
+                <Field label="Tổng số ghế"><input value={form.totalSeats} inputMode="numeric" onChange={(e) => setForm({ ...form, totalSeats: e.target.value })} /></Field>
+                <Field label="Giá vé Phổ thông (₫)"><input value={form.price} inputMode="numeric" onChange={(e) => setForm({ ...form, price: e.target.value })} /></Field>
+                <Field label="Giá vé Thương gia (₫)"><input value={form.businessPrice} inputMode="numeric" onChange={(e) => setForm({ ...form, businessPrice: e.target.value })} /></Field>
+                <Field label="Đóng nhận đặt trước giờ bay (giờ)"><input value={form.cutoffHours} inputMode="numeric" onChange={(e) => setForm({ ...form, cutoffHours: e.target.value })} /></Field>
+                <Field label="Nhãn hiển thị (Tag)"><input value={form.tag} maxLength={40} onChange={(e) => setForm({ ...form, tag: e.target.value })} /></Field>
               </>
             )}
             <label className="admin-check">
               <input type="checkbox" checked={form.hasPromo} onChange={(e) => setForm({ ...form, hasPromo: e.target.checked })} />
-              Có chương trình khuyến mãi
+              Áp dụng chương trình ưu đãi
             </label>
             <label className="admin-check">
               <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />
-              Đang kinh doanh
+              Đang mở bán (Active)
             </label>
             {formError && <p className="admin-login-error" role="alert">{formError}</p>}
             <div className="admin-form-actions">
@@ -1069,10 +2092,24 @@ function ComboCrudSection({ call, onGotoExtra }) {
             <tbody>
               {rows.map((row) => (
                 <tr key={row.id} className={row.isActive ? '' : 'muted'}>
-                  <td><b>{row.name}</b><small>{row.description}</small></td>
-                  <td><small>{row.hotelId}</small><small>{row.flightId}</small></td>
-                  <td className="num"><b>{money(row.price)}</b></td>
-                  <td className="num">{money(row.saving)}</td>
+                  <td>
+                    <b>{row.name}</b>
+                    <small>{row.description}</small>
+                    {row.inventoryWarning && (
+                      <small style={{ color: '#f59e0b', fontWeight: 700, display: 'block', marginTop: '3px' }}>
+                        ⚠️ Cảnh báo tồn kho: {row.inventoryWarning}
+                      </small>
+                    )}
+                  </td>
+                  <td>
+                    <small>KS: <b>{row.hotelName || row.hotelId}</b> ({row.roomName || 'Phòng chuẩn'})</small>
+                    <small>Bay: <b>{row.flightLabel || row.flightId}</b></small>
+                  </td>
+                  <td className="num">
+                    <b>{money(row.price)}</b>
+                    {row.originalPrice && <small style={{ textDecoration: 'line-through', opacity: 0.7 }}>Gốc: {money(row.originalPrice)}</small>}
+                  </td>
+                  <td className="num">{money(row.saving)}<small>{row.maxSlots || 20} suất</small></td>
                   <td><small>{row.validFrom || '—'} - {row.validTo || '…'}</small></td>
                   <td>
                     <Toggle checked={row.isActive} onChange={() => toggleActive(row)} labelOn="Đang bán" labelOff="Ngừng bán" />
@@ -1581,6 +2618,9 @@ function PromoCrudSection({ call }) {
 /* -------------------------------------------------------------- users */
 function UsersSection({ call }) {
   const [rows, setRows] = useState([])
+  const [search, setSearch] = useState('')
+  const [roleFilter, setRoleFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
@@ -1591,7 +2631,7 @@ function UsersSection({ call }) {
     setRows(Array.isArray(res.data?.data) ? res.data.data : [])
   }
 
-  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps react/set-state-in-effect
+  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const toggleActive = async (row) => {
     const res = await call(`/api/admin/users/${row.id}`, { method: 'PATCH', body: { isActive: !row.isActive } })
     if (!res.ok) { setError(res.data?.error || 'Không đổi được trạng thái tài khoản.'); return }
@@ -1612,16 +2652,44 @@ function UsersSection({ call }) {
     load()
   }
 
+  const filtered = rows.filter((u) => {
+    if (roleFilter !== 'all' && u.role !== roleFilter) return false
+    if (statusFilter === 'active' && !u.isActive) return false
+    if (statusFilter === 'banned' && u.isActive) return false
+    if (!search.trim()) return true
+    const q = search.trim().toLowerCase()
+    return u.email?.toLowerCase().includes(q) || u.name?.toLowerCase().includes(q) || u.phone?.toLowerCase().includes(q)
+  })
+
   return (
     <div className="admin-section">
-      <div className="admin-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span className="admin-count">{rows.length} tài khoản</span>
+      <div className="admin-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', flex: 1 }}>
+          <input
+            className="admin-search"
+            placeholder="Tìm email, họ tên, số điện thoại…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+            <option value="all">Tất cả vai trò</option>
+            <option value="admin">Quản trị viên (admin)</option>
+            <option value="staff">Lễ tân (staff)</option>
+            <option value="user">Khách hàng (user)</option>
+          </select>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option value="all">Tất cả trạng thái</option>
+            <option value="active">Đang hoạt động</option>
+            <option value="banned">Đã khóa / Vô hiệu hóa</option>
+          </select>
+        </div>
+        <span className="admin-count">{filtered.length} / {rows.length} tài khoản</span>
         <a
-          href="#/staff/scanner"
+          href="#/staff/checkin"
           className="admin-btn-secondary"
           style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.88rem' }}
         >
-          <Camera size={15} strokeWidth={1.8} /> Mở máy quét QR Check-in Lễ tân
+          <Camera size={15} strokeWidth={1.8} /> Mở Cổng Quét QR Check-in Lễ tân
         </a>
       </div>
 
@@ -1631,28 +2699,38 @@ function UsersSection({ call }) {
       <div className="admin-note">
         <p>
           Phân quyền RBAC 3 tầng: <b>Khách hàng (user)</b>, <b>Lễ tân (staff)</b> và <b>Quản trị viên (admin)</b>.
-          Vô hiệu hóa tài khoản sẽ đăng xuất ngay mọi phiên đang hoạt động của người dùng đó.
+          Vô hiệu hóa tài khoản sẽ đăng xuất ngay mọi phiên đang hoạt động của người dùng đó và ghi Audit Log.
         </p>
       </div>
 
-      {rows.length === 0 ? <Empty text="Chưa có tài khoản nào." /> : (
+      {filtered.length === 0 ? <Empty text="Không có tài khoản nào khớp bộ lọc." /> : (
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead>
               <tr>
-                <th>Email</th>
+                <th>Email & SĐT</th>
                 <th>Tên hiển thị</th>
-                <th>Vai trò</th>
-                <th>Số đơn</th>
+                <th>Hạng & Điểm thưởng</th>
+                <th className="num">Số dư Ví</th>
+                <th>Vai trò (RBAC)</th>
+                <th className="num">Số đơn</th>
                 <th>Ngày tạo</th>
                 <th>Trạng thái</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {filtered.map((row) => (
                 <tr key={row.id} className={row.isActive ? '' : 'muted'}>
-                  <td>{row.email}</td>
+                  <td>
+                    <b>{row.email}</b>
+                    {row.phone && <small>{row.phone}</small>}
+                  </td>
                   <td>{row.name}</td>
+                  <td>
+                    <span className="admin-tag">{row.memberTier || 'Thành viên'}</span>
+                    <small>{row.loyaltyPoints || 0} điểm</small>
+                  </td>
+                  <td className="num"><b>{money(row.balance || 0)}</b></td>
                   <td>
                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
                       <span className={`admin-tag ${row.role === 'admin' ? 'ok' : row.role === 'staff' ? 'warn' : ''}`}>
@@ -1676,7 +2754,7 @@ function UsersSection({ call }) {
                     <Toggle
                       checked={row.isActive}
                       onChange={() => toggleActive(row)}
-                      labelOn="Đang hoạt động" labelOff="Đã vô hiệu hóa"
+                      labelOn="Đang hoạt động" labelOff="Đã khóa"
                     />
                   </td>
                 </tr>
@@ -1704,14 +2782,16 @@ function RoomCrudSection({ call }) {
   const [hotels, setHotels] = useState([])
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [form, setForm] = useState(null) // null = đóng modal; object = đang tạo/sửa
-  const [editing, setEditing] = useState(null) // null = tạo mới
+  const [form, setForm] = useState(null)
+  const [editing, setEditing] = useState(null)
   const [saving, setSaving] = useState(false)
-  const [removing, setRemoving] = useState(null) // id phòng đang xóa
+  const [removing, setRemoving] = useState(null)
   const [formError, setFormError] = useState('')
   const [search, setSearch] = useState('')
   const [filterHotel, setFilterHotel] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
+  const [checkIn, setCheckIn] = useState(() => new Date().toISOString().slice(0, 10))
+  const [checkOut, setCheckOut] = useState(() => new Date(Date.now() + 86400000).toISOString().slice(0, 10))
   const [loading, setLoading] = useState(true)
 
   const load = async () => {
@@ -1722,6 +2802,8 @@ function RoomCrudSection({ call }) {
       if (search) params.set('q', search)
       if (filterHotel) params.set('hotelId', filterHotel)
       if (filterStatus !== 'all') params.set('isActive', filterStatus === 'active')
+      if (checkIn) params.set('checkIn', checkIn)
+      if (checkOut) params.set('checkOut', checkOut)
       const res = await call(`/api/admin/rooms?${params}`)
       if (!res.ok) {
         setError(res.data?.error || 'Không tải được danh sách phòng.')
@@ -1752,7 +2834,7 @@ function RoomCrudSection({ call }) {
 
   const emptyForm = () => ({
     name: '', hotelId: '', price: '', bedType: 'Giường king', sizeSqm: '',
-    maxAdults: '2', maxChildren: '0', amenities: '', images: '',
+    maxAdults: '2', maxChildren: '0', totalRooms: '5', amenities: '', images: '',
     breakfast: false, freeCancellation: false, checkinTime: '14:00', checkoutTime: '12:00', isActive: true,
   })
 
@@ -1769,6 +2851,7 @@ function RoomCrudSection({ call }) {
       id: row.id, name: row.name, hotelId: row.hotelId, price: String(row.price),
       bedType: row.bedType, sizeSqm: row.sizeSqm == null ? '' : String(row.sizeSqm),
       maxAdults: String(row.maxAdults), maxChildren: String(row.maxChildren),
+      totalRooms: String(row.totalRooms ?? 5),
       amenities: Array.isArray(row.amenities) ? row.amenities.join(', ') : '',
       images: Array.isArray(row.images) ? row.images.join(', ') : '',
       breakfast: !!row.breakfast, freeCancellation: !!row.freeCancellation,
@@ -1820,6 +2903,7 @@ function RoomCrudSection({ call }) {
 
     const body = {
       name, hotelId: form.hotelId, price, bedType, sizeSqm, maxAdults, maxChildren,
+      totalRooms: Number(form.totalRooms) || 5,
       amenities, images,
       breakfast: !!form.breakfast, freeCancellation: !!form.freeCancellation,
       checkinTime: form.checkinTime || '14:00', checkoutTime: form.checkoutTime || '12:00',
@@ -1871,7 +2955,7 @@ function RoomCrudSection({ call }) {
 
   return (
     <div className="admin-section">
-      <div className="admin-toolbar">
+      <div className="admin-toolbar" style={{ flexWrap: 'wrap', gap: '8px' }}>
         <input
           className="admin-search"
           placeholder="Tìm tên phòng, loại giường…"
@@ -1887,6 +2971,9 @@ function RoomCrudSection({ call }) {
           <option value="active">Đang kinh doanh</option>
           <option value="inactive">Ngừng kinh doanh</option>
         </select>
+        <input type="date" value={checkIn} onChange={(e) => setCheckIn(e.target.value)} title="Kiểm tra phòng trống từ ngày" />
+        <input type="date" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} title="Đến ngày" />
+        <button type="button" onClick={load}>Kiểm tra tồn phòng</button>
         <button type="button" className="primary" onClick={openCreate}>+ Thêm phòng mới</button>
         <span className="admin-count">{rows.length} phòng</span>
       </div>
@@ -1906,7 +2993,7 @@ function RoomCrudSection({ call }) {
                 <th>Khách sạn</th>
                 <th className="num">Giá / đêm</th>
                 <th className="num">Sức chứa</th>
-                <th className="num">Kích thước</th>
+                <th className="num">Tồn kho / Trống</th>
                 <th>Tiện nghi</th>
                 <th>Trạng thái</th>
                 <th className="admin-actions">Hành động</th>
@@ -1917,12 +3004,17 @@ function RoomCrudSection({ call }) {
                 <tr key={row.id} className={row.isActive ? '' : 'muted'}>
                   <td>
                     <b>{row.name}</b>
-                    {row.bedType && <small>{row.bedType}</small>}
+                    {row.bedType && <small>{row.bedType} {row.sizeSqm ? `· ${row.sizeSqm} m²` : ''}</small>}
                   </td>
                   <td>{row.hotelName || row.hotelId}</td>
                   <td className="num">{money(row.price)}</td>
                   <td className="num">{row.maxAdults} lớn / {row.maxChildren} nhỏ</td>
-                  <td className="num">{row.sizeSqm == null ? '—' : `${row.sizeSqm} m2`}</td>
+                  <td className="num">
+                    <span className={`admin-tag ${(row.availableCount ?? 5) > 0 ? 'ok' : 'danger'}`}>
+                      {row.availableCount ?? (row.totalRooms || 5)}/{row.totalRooms || 5} trống
+                    </span>
+                    {row.bookedCount > 0 && <small>{row.bookedCount} đã đặt</small>}
+                  </td>
                   <td>
                     {(row.amenities || []).slice(0, 4).map((a, i) => (
                       <span key={i} className="admin-tag" style={{ fontSize: '11px', padding: '2px 6px', margin: '1px' }}>{a}</span>
@@ -1995,6 +3087,10 @@ function RoomCrudSection({ call }) {
               <input value={form.maxChildren} inputMode="numeric" maxLength={2}
                 onChange={(e) => setForm({ ...form, maxChildren: e.target.value })} />
             </Field>
+            <Field label="Tổng số lượng phòng">
+              <input value={form.totalRooms ?? '5'} inputMode="numeric" maxLength={3}
+                onChange={(e) => setForm({ ...form, totalRooms: e.target.value })} />
+            </Field>
             <Field label="Tiện nghi (phân cách bằng dấu phẩy)">
               <input value={form.amenities} maxLength={400}
                 onChange={(e) => setForm({ ...form, amenities: e.target.value })} />
@@ -2052,7 +3148,7 @@ function ErrorBar({ message, onRetry }) {
 }
 
 /* ---------------------------------------------------- Task 3 & 4: Sprint 2 */
-function ExportExcelModal({ onClose }) {
+function ExportExcelModal({ onClose, defaultRange = '30d' }) {
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
   const [serviceType, setServiceType] = useState('all')
@@ -2066,6 +3162,7 @@ function ExportExcelModal({ onClose }) {
       const params = new URLSearchParams()
       if (fromDate) params.append('from_date', fromDate)
       if (toDate) params.append('to_date', toDate)
+      if (!fromDate && !toDate && defaultRange) params.append('range', defaultRange)
       if (serviceType && serviceType !== 'all') params.append('service_type', serviceType)
 
       const url = `/api/admin/reports/revenue/export?${params.toString()}`

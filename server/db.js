@@ -302,12 +302,29 @@ try {
   ensureColumn('bookings', 'seat_code', 'TEXT')
   ensureColumn('bookings', 'checked_in_at', 'TEXT')
   ensureColumn('bookings', 'checked_in_by', 'TEXT')
+  ensureColumn('bookings', 'cancel_reason', 'TEXT')
+  ensureColumn('bookings', 'internal_note', 'TEXT')
+  ensureColumn('bookings', 'completed_at', 'TEXT')
   // Idempotency chống ghi trùng + cột đánh dấu đơn không định giá được (legacy).
   ensureColumn('bookings', 'idempotency_key', 'TEXT')
   ensureColumn('bookings', 'client_id', 'TEXT')
   ensureColumn('bookings', 'legacy', 'INTEGER NOT NULL DEFAULT 0')
-  // Voucher: giá trị đơn tối thiểu để áp dụng mã (0 = không giới hạn).
+  // Rooms: tổng số lượng phòng
+  ensureColumn('rooms', 'total_rooms', 'INTEGER NOT NULL DEFAULT 5')
+  // Flights: mã chuyến, giá thương gia, tổng số ghế, trạng thái chuyến bay, giờ đóng quầy
+  ensureColumn('flights', 'flight_code', 'TEXT')
+  ensureColumn('flights', 'business_price', 'INTEGER')
+  ensureColumn('flights', 'total_seats', 'INTEGER NOT NULL DEFAULT 72')
+  ensureColumn('flights', 'flight_status', "TEXT NOT NULL DEFAULT 'scheduled'")
+  ensureColumn('flights', 'cutoff_hours', 'INTEGER NOT NULL DEFAULT 2')
+  // Combos: liên kết hạng phòng và số suất mở bán
+  ensureColumn('combos', 'room_id', 'TEXT')
+  ensureColumn('combos', 'max_slots', 'INTEGER NOT NULL DEFAULT 20')
+  // Voucher: giá trị đơn tối thiểu, loại giảm (percent/fixed), giảm tối đa, giới hạn mỗi user
   ensureColumn('promotions', 'min_order', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn('promotions', 'discount_type', "TEXT NOT NULL DEFAULT 'percent'")
+  ensureColumn('promotions', 'max_discount', 'INTEGER')
+  ensureColumn('promotions', 'per_user_limit', 'INTEGER NOT NULL DEFAULT 1')
   // Khách sạn: tọa độ GPS và tên thành phố phục vụ định vị vị trí trực tiếp
   ensureColumn('hotels', 'lat', 'REAL')
   ensureColumn('hotels', 'lng', 'REAL')
@@ -414,10 +431,10 @@ try {
     try { db.exec('PRAGMA foreign_keys = ON') } catch { /* bỏ qua */ }
     console.error('[db] migration users role staff thất bại:', err.message)
   }
-  // Mở rộng CHECK constraint service_type và status trên bảng bookings cũ để hỗ trợ checked_in.
+  // Mở rộng CHECK constraint service_type, status và payment_status trên bảng bookings cũ để hỗ trợ checked_in, Hoàn tất, refund_pending.
   try {
     const schemaRow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='bookings'").get()
-    if (schemaRow?.sql && (!schemaRow.sql.includes("'activity'") || !schemaRow.sql.includes("'checked_in'"))) {
+    if (schemaRow?.sql && (!schemaRow.sql.includes("'activity'") || !schemaRow.sql.includes("'checked_in'") || !schemaRow.sql.includes("'Hoàn tất'") || !schemaRow.sql.includes("'refund_pending'"))) {
       const existingCols = db.prepare('PRAGMA table_info(bookings)').all().map((c) => c.name)
       const colList = existingCols.join(', ')
       db.exec('PRAGMA foreign_keys = OFF')
@@ -431,10 +448,10 @@ try {
           item_id         TEXT NOT NULL,
           title           TEXT NOT NULL,
           status          TEXT NOT NULL DEFAULT 'Đã xác nhận'
-                          CHECK (status IN ('Đã tạo','Chờ thanh toán','Đã thanh toán','Đã xác nhận','Đã hủy','checked_in')),
+                          CHECK (status IN ('Đã tạo','Chờ thanh toán','Đã thanh toán','Đã xác nhận','Đã hủy','checked_in','Hoàn tất')),
           payment_method  TEXT NOT NULL DEFAULT '',
-          payment_status  TEXT NOT NULL DEFAULT 'simulated'
-                          CHECK (payment_status IN ('pending','simulated','paid','refunded')),
+          payment_status  TEXT NOT NULL DEFAULT 'paid'
+                          CHECK (payment_status IN ('pending','simulated','paid','refund_pending','refunded')),
           traveler_name   TEXT NOT NULL,
           traveler_phone  TEXT NOT NULL,
           traveler_email  TEXT NOT NULL,
@@ -462,6 +479,9 @@ try {
           seat_code       TEXT,
           checked_in_at   TEXT,
           checked_in_by   TEXT,
+          cancel_reason   TEXT,
+          internal_note   TEXT,
+          completed_at    TEXT,
           UNIQUE (user_id, idempotency_key)
         );
         INSERT INTO bookings_v3 (${colList}) SELECT ${colList} FROM bookings;
@@ -473,6 +493,9 @@ try {
       db.exec('COMMIT')
       db.exec('PRAGMA foreign_keys = ON')
     }
+    // Chuẩn hóa Production: chuyển toàn bộ đơn hợp lệ cũ có payment_status='simulated' sang 'paid'
+    db.prepare(`UPDATE bookings SET payment_status = 'paid' WHERE payment_status = 'simulated' AND status IN ('Đã xác nhận', 'Đã thanh toán', 'checked_in', 'Hoàn tất')`).run()
+    db.prepare(`UPDATE bookings SET payment_status = 'pending' WHERE payment_status = 'simulated' AND status NOT IN ('Đã xác nhận', 'Đã thanh toán', 'checked_in', 'Hoàn tất')`).run()
   } catch (err) {
     try { db.exec('ROLLBACK') } catch { /* bỏ qua */ }
     try { db.exec('PRAGMA foreign_keys = ON') } catch { /* bỏ qua */ }
@@ -615,17 +638,46 @@ export const hotelOut = (r) =>
     lat: r.lat ?? null, lng: r.lng ?? null, city: r.city ?? null,
   }
 
-export const flightOut = (r) =>
-  r && {
-    id: r.id, airline: r.airline, logo: r.logo, from: r.origin, to: r.dest,
-    depart: r.depart, arrive: r.arrive, duration: r.duration, price: r.price,
-    tag: r.tag, hasPromo: !!r.has_promo, isActive: !!r.is_active,
+export const flightOut = (r) => {
+  if (!r) return null
+  const seatStats = db.prepare(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END) AS available,
+      SUM(CASE WHEN status = 'booked' THEN 1 ELSE 0 END) AS booked
+    FROM flight_seats WHERE flight_id = ?
+  `).get(r.id) || { total: 0, available: 0, booked: 0 }
+  return {
+    id: r.id,
+    flightCode: r.flight_code || `${r.logo || 'VN'}-${String(r.id).replace(/[^0-9]/g, '').padStart(3, '0') || '101'}`,
+    airline: r.airline,
+    logo: r.logo,
+    from: r.origin,
+    to: r.dest,
+    depart: r.depart,
+    arrive: r.arrive,
+    duration: r.duration,
+    price: r.price,
+    businessPrice: r.business_price != null ? Number(r.business_price) : Math.round(Number(r.price) * 1.8),
+    totalSeats: Number(r.total_seats) || Number(seatStats.total) || 72,
+    availableSeats: Number(seatStats.available) || 0,
+    bookedSeats: Number(seatStats.booked) || 0,
+    flightStatus: r.flight_status || 'scheduled',
+    cutoffHours: r.cutoff_hours != null ? Number(r.cutoff_hours) : 2,
+    tag: r.tag,
+    hasPromo: !!r.has_promo,
+    isActive: !!r.is_active,
   }
+}
 
 export const promoOut = (r) =>
   r && {
-    id: r.id, code: r.code, title: r.code, desc: r.description, description: r.description,
-    color: r.color, rate: r.rate, appliesTo: String(r.applies_to || '').split(',').filter(Boolean),
+    id: r.id, code: r.code, title: r.title || r.code, desc: r.description, description: r.description,
+    color: r.color, rate: r.rate,
+    discountType: r.discount_type || 'percent',
+    maxDiscount: r.max_discount != null ? Number(r.max_discount) : null,
+    perUserLimit: r.per_user_limit != null ? Number(r.per_user_limit) : 1,
+    appliesTo: String(r.applies_to || '').split(',').filter(Boolean),
     usageLimit: r.usage_limit, usedCount: r.used_count, activeFrom: r.active_from,
     activeTo: r.active_to, isActive: !!r.is_active, minOrder: Number(r.min_order) || 0,
   }
@@ -633,13 +685,39 @@ export const promoOut = (r) =>
 // Combo: giá = khách sạn + chuyến bay − mức giảm (hoặc giá ghi đè của admin).
 export function comboOut(row, hotelRow, flightRow) {
   if (!row || !hotelRow || !flightRow) return null
+  const roomRow = row.room_id
+    ? db.prepare('SELECT * FROM rooms WHERE id = ?').get(row.room_id)
+    : db.prepare('SELECT * FROM rooms WHERE hotel_id = ? AND is_active = 1 ORDER BY price ASC LIMIT 1').get(hotelRow.id)
+  const baseHotelPrice = roomRow ? Number(roomRow.price) : Number(hotelRow.price)
+  const originalPrice = baseHotelPrice + Number(flightRow.price)
   const price = row.price_override != null
     ? row.price_override
-    : hotelRow.price + flightRow.price - row.saving
+    : Math.max(originalPrice - row.saving, 0)
+
+  const availSeats = db.prepare("SELECT COUNT(*) AS c FROM flight_seats WHERE flight_id = ? AND status = 'available'").get(flightRow.id)?.c ?? 72
+  const activeRoomsCount = db.prepare('SELECT COUNT(*) AS c FROM rooms WHERE hotel_id = ? AND is_active = 1').get(hotelRow.id)?.c ?? 1
+  const warnings = []
+  if (!hotelRow.is_active) warnings.push('Khách sạn đang ngừng bán')
+  if (activeRoomsCount === 0 || (roomRow && !roomRow.is_active)) warnings.push('Hạng phòng ngừng bán/hết phòng')
+  if (!flightRow.is_active || flightRow.flight_status === 'cancelled' || flightRow.flight_status === 'departed') {
+    warnings.push('Chuyến bay đã đóng hoặc bị hủy')
+  } else if (availSeats <= 0) {
+    warnings.push('Chuyến bay đã hết ghế trống')
+  }
+
   return {
     id: row.id, name: row.name, saving: row.saving, price,
-    hotelId: row.hotel_id, flightId: row.flight_id, description: row.description,
+    originalPrice,
+    priceOverride: row.price_override,
+    hotelId: row.hotel_id, hotelName: hotelRow.name,
+    roomId: row.room_id || (roomRow ? roomRow.id : null),
+    roomName: roomRow ? roomRow.name : 'Phòng tiêu chuẩn',
+    flightId: row.flight_id, flightLabel: `${flightRow.airline} (${flightRow.origin} → ${flightRow.dest})`,
+    maxSlots: Number(row.max_slots) || 20,
+    description: row.description,
     validFrom: row.valid_from, validTo: row.valid_to, isActive: !!row.is_active,
+    inventoryWarning: warnings.length > 0 ? warnings.join(' · ') : null,
+    isBookable: !!row.is_active && warnings.length === 0,
     hasPromo: !!hotelRow.has_promo,
     // Các trường thừa kế từ khách sạn để trang Combo dùng lại HotelCard:
     location: hotelRow.location, rating: hotelRow.rating, stars: hotelRow.stars,
@@ -690,7 +768,9 @@ export const roomOut = (r) =>
   r && {
     id: r.id, hotelId: r.hotel_id, name: r.name, price: r.price,
     bedType: r.bed_type, sizeSqm: r.size_sqm, maxAdults: r.max_adults,
-    maxChildren: r.max_children, amenities: JSON.parse(r.amenities || '[]'),
+    maxChildren: r.max_children,
+    totalRooms: Number(r.total_rooms) || 5,
+    amenities: JSON.parse(r.amenities || '[]'),
     images: JSON.parse(r.images || '[]'), breakfast: !!r.breakfast,
     freeCancellation: !!r.free_cancellation, checkinTime: r.checkin_time,
     checkoutTime: r.checkout_time, isActive: !!r.is_active,
