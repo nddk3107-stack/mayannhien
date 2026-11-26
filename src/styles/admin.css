@@ -1281,5 +1281,7 @@
 /* admin contrast round 2 */
 .admin-shell b, .admin-shell code { color: var(--brand-text); }
 
-html .admin-shell b, html .admin-shell code, html [data-theme="light"] .admin-shell b, html [data-theme="light"] .admin-shell code { color: #075985 !important; }
-html [data-theme="dark"] .admin-shell b, html [data-theme="dark"] .admin-shell code { color: #38BDF8 !important; }
+html[data-theme="light"] .admin-shell b { color: #0f172a !important; }
+html[data-theme="light"] .admin-shell code { color: #0369a1 !important; }
+html[data-theme="dark"] .admin-shell b, :root:not([data-theme="light"]) .admin-shell b { color: #f8fafc !important; }
+html[data-theme="dark"] .admin-shell code, :root:not([data-theme="light"]) .admin-shell code { color: #38BDF8 !important; }

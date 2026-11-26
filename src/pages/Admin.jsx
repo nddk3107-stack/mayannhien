@@ -683,18 +683,18 @@ const RANGE_OPTIONS = [
 ]
 
 const STATUS_BADGE_COLORS = {
-  pending: { bg: 'rgba(245, 158, 11, 0.16)', color: '#d97706', border: 'rgba(245, 158, 11, 0.35)' },
-  confirmed: { bg: 'rgba(59, 130, 246, 0.16)', color: '#2563eb', border: 'rgba(59, 130, 246, 0.35)' },
-  checked_in: { bg: 'rgba(16, 185, 129, 0.16)', color: '#059669', border: 'rgba(16, 185, 129, 0.35)' },
-  completed: { bg: 'rgba(139, 92, 246, 0.16)', color: '#7c3aed', border: 'rgba(139, 92, 246, 0.35)' },
-  cancelled: { bg: 'rgba(239, 68, 68, 0.16)', color: '#dc2626', border: 'rgba(239, 68, 68, 0.35)' },
+  pending: { bg: 'rgba(245, 158, 11, 0.18)', color: '#f59e0b', border: 'rgba(245, 158, 11, 0.45)' },
+  confirmed: { bg: 'rgba(59, 130, 246, 0.18)', color: '#3b82f6', border: 'rgba(59, 130, 246, 0.45)' },
+  checked_in: { bg: 'rgba(16, 185, 129, 0.18)', color: '#10b981', border: 'rgba(16, 185, 129, 0.45)' },
+  completed: { bg: 'rgba(139, 92, 246, 0.18)', color: '#a855f7', border: 'rgba(139, 92, 246, 0.45)' },
+  cancelled: { bg: 'rgba(239, 68, 68, 0.18)', color: '#ef4444', border: 'rgba(239, 68, 68, 0.45)' },
 }
 
 const PAYMENT_BADGE_COLORS = {
-  pending: { bg: 'rgba(148, 163, 184, 0.18)', color: '#64748b', border: 'rgba(148, 163, 184, 0.35)' },
-  paid: { bg: 'rgba(16, 185, 129, 0.16)', color: '#059669', border: 'rgba(16, 185, 129, 0.35)' },
-  refund_pending: { bg: 'rgba(249, 115, 22, 0.18)', color: '#ea580c', border: 'rgba(249, 115, 22, 0.4)' },
-  refunded: { bg: 'rgba(239, 68, 68, 0.15)', color: '#dc2626', border: 'rgba(239, 68, 68, 0.35)' },
+  pending: { bg: 'rgba(148, 163, 184, 0.2)', color: '#94a3b8', border: 'rgba(148, 163, 184, 0.45)' },
+  paid: { bg: 'rgba(16, 185, 129, 0.18)', color: '#10b981', border: 'rgba(16, 185, 129, 0.45)' },
+  refund_pending: { bg: 'rgba(249, 115, 22, 0.2)', color: '#f97316', border: 'rgba(249, 115, 22, 0.45)' },
+  refunded: { bg: 'rgba(239, 68, 68, 0.18)', color: '#ef4444', border: 'rgba(239, 68, 68, 0.45)' },
 }
 
 function DashboardSection({ call, onGoto }) {
@@ -967,7 +967,7 @@ function DashboardSection({ call, onGoto }) {
       {/* 4. HÀNG 3 — BIỂU ĐỒ PHÂN TÍCH (2 CỘT TỶ LỆ 8 / 4) */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.25rem' }}>
         {/* Cột trái: Biểu đồ kết hợp Doanh thu thực & Số đơn mới theo ngày (có Tooltip) */}
-        <section className="admin-panel" style={{ gridColumn: 'span 2' }}>
+        <section className="admin-panel" style={{ gridColumn: 'span 2', minWidth: 0, overflow: 'hidden' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
             <div>
               <h3 style={{ margin: 0 }}>Biểu đồ Doanh thu thực & Lưu lượng đơn theo ngày</h3>
@@ -1000,18 +1000,19 @@ function DashboardSection({ call, onGoto }) {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: `repeat(${Math.max(revChart.length, 1)}, minmax(22px, 1fr))`,
-              gap: '6px',
+              gridTemplateColumns: `repeat(${Math.max(revChart.length, 1)}, minmax(0, 1fr))`,
+              gap: revChart.length > 14 ? '3px' : '6px',
               alignItems: 'end',
-              height: '190px',
-              padding: '16px 6px 4px',
+              height: '200px',
+              padding: '16px 4px 8px',
               borderBottom: '1px solid var(--adm-border)',
             }}
           >
-            {revChart.map((d) => {
+            {revChart.map((d, idx) => {
               const revPct = d.net_revenue > 0 ? Math.max(Math.round((d.net_revenue / maxRev) * 100), 8) : 2
               const ordPct = d.orders_count > 0 ? Math.max(Math.round((d.orders_count / maxOrd) * 100), 10) : 2
               const isHover = hoveredBar?.date === d.date
+              const showLabel = revChart.length <= 15 || idx % 2 === 0 || idx === revChart.length - 1
               return (
                 <div
                   key={d.date}
@@ -1023,37 +1024,48 @@ function DashboardSection({ call, onGoto }) {
                     flexDirection: 'column',
                     alignItems: 'center',
                     height: '100%',
+                    minWidth: 0,
                     justifyContent: 'flex-end',
                     cursor: 'pointer',
-                    background: isHover ? 'rgba(16, 185, 129, 0.08)' : 'transparent',
+                    background: isHover ? 'rgba(16, 185, 129, 0.12)' : 'transparent',
                     borderRadius: '6px',
-                    padding: '2px',
+                    padding: '2px 1px',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', width: '100%', height: '140px', justifyContent: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', width: '100%', height: '145px', justifyContent: 'center' }}>
                     <span
                       style={{
-                        width: '45%',
+                        width: '46%',
                         maxWidth: '16px',
                         height: `${revPct}%`,
                         background: 'linear-gradient(180deg, #10b981, #059669)',
-                        borderRadius: '4px 4px 0 0',
+                        borderRadius: '3px 3px 0 0',
                         transition: 'height 0.2s',
                       }}
                     />
                     <span
                       style={{
-                        width: '35%',
+                        width: '36%',
                         maxWidth: '12px',
                         height: `${ordPct}%`,
                         background: '#3b82f6',
                         opacity: 0.85,
-                        borderRadius: '4px 4px 0 0',
+                        borderRadius: '3px 3px 0 0',
                         transition: 'height 0.2s',
                       }}
                     />
                   </div>
-                  <small style={{ fontSize: '0.68rem', marginTop: '6px', opacity: 0.8, whiteSpace: 'nowrap' }}>{d.label}</small>
+                  <small
+                    style={{
+                      fontSize: revChart.length > 15 ? '0.62rem' : '0.68rem',
+                      marginTop: '6px',
+                      opacity: showLabel ? 0.85 : 0,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    {d.label}
+                  </small>
                 </div>
               )
             })}
