@@ -14,6 +14,7 @@
     "seed:admin": "node -e \"import('./server/db.js').then((m) => { console.log('Admin ready'); process.exit(0); })\""
   },
   "dependencies": {
+    "@vitejs/plugin-react": "^6.1.1",
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "html5-qrcode": "^2.3.8",
@@ -23,15 +24,14 @@
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "vite": "^8.3.0",
     "ws": "^8.23.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
-    "@vitejs/plugin-react": "^6.1.1",
     "localtunnel": "^2.0.2",
     "oxlint": "^1.81.0",
-    "playwright": "^1.63.0",
-    "vite": "^8.3.0"
+    "playwright": "^1.63.0"
   }
 }
