@@ -18,9 +18,10 @@ const CSP_DIRECTIVES = [
   // Ảnh từ CDN bên ngoài (ảnh khách sạn/đại lý) và data: avatar.
   "img-src 'self' data: https: blob:",
   "font-src 'self' data:",
-  // Kết nối tới API cùng origin; nếu tách domain thì thêm vào connect-src.
-  "connect-src 'self'",
-  "media-src 'self' https:",
+  // Kết nối tới API cùng origin + WebSocket realtime (ws/wss).
+  "connect-src 'self' ws: wss: https:",
+  "media-src 'self' https: blob: mediastream:",
+  "worker-src 'self' blob:",
   'upgrade-insecure-requests',
 ].join('; ')
 
@@ -31,7 +32,7 @@ export function securityHeaders(req, res, next) {
   res.set('X-Content-Type-Options', 'nosniff')
   res.set('X-Frame-Options', 'DENY')
   res.set('Referrer-Policy', 'strict-origin-when-cross-origin')
-  res.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()')
+  res.set('Permissions-Policy', 'geolocation=(self), microphone=(), camera=(self), payment=()')
   res.set('Cross-Origin-Opener-Policy', 'same-origin')
   res.set('Cross-Origin-Resource-Policy', 'same-origin')
   res.set('Content-Security-Policy', CSP_DIRECTIVES)

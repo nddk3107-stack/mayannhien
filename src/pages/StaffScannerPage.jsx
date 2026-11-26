@@ -3,14 +3,17 @@ import { useState, useEffect, useRef } from 'react'
 import {
   AlertTriangle,
   Camera,
+  CameraOff,
   CheckCircle2,
+  ImageUp,
   Lock,
   QrCode,
   ReceiptText,
+  RefreshCw,
   User,
   XCircle,
 } from 'lucide-react'
-import { Html5QrcodeScanner } from 'html5-qrcode'
+import { Html5Qrcode } from 'html5-qrcode'
 import { apiFetch } from '../services/api.js'
 import { useRealtime } from '../realtime/RealtimeContext.jsx'
 
@@ -22,8 +25,15 @@ export function StaffScannerPage({ session, onNavigate }) {
   const [result, setResult] = useState(null)
   const [recentCheckins, setRecentCheckins] = useState([])
   const [cameraError, setCameraError] = useState('')
-  const scannerRef = useRef(null)
-  const { isConnected } = useRealtime()
+  const [cameraActive, setCameraActive] = useState(false)
+  const [startingCamera, setStartingCamera] = useState(false)
+  const [cameras, setCameras] = useState([])
+  const [selectedCameraId, setSelectedCameraId] = useState('')
+  const html5QrRef = useRef(null)
+  const fileInputRef = useRef(null)
+  const lastScannedRef = useRef({ text: '', time: 0 })
+  const { status, subscribe } = useRealtime()
+  const isConnected = status === 'connected'
 
   const loadRecentCheckins = async () => {
     if (!isAuthorized) return
@@ -38,54 +48,106 @@ export function StaffScannerPage({ session, onNavigate }) {
   }
 
   useEffect(() => {
-    if (isAuthorized) {
+    if (!isAuthorized) return
+    loadRecentCheckins()
+    if (!subscribe) return
+    const unsub = subscribe('booking:checked_in', () => {
       loadRecentCheckins()
-    }
+    })
+    return () => unsub?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthorized])
+  }, [isAuthorized, subscribe])
 
-  // Khởi tạo máy quét QR bằng html5-qrcode
+  const stopCamera = async () => {
+    if (html5QrRef.current) {
+      try {
+        if (html5QrRef.current.isScanning) {
+          await html5QrRef.current.stop()
+        }
+        await html5QrRef.current.clear()
+      } catch {
+        // ignore stop errors
+      }
+    }
+    setCameraActive(false)
+  }
+
+  const startCamera = async (preferredCameraId = selectedCameraId) => {
+    setCameraError('')
+    setStartingCamera(true)
+    try {
+      await stopCamera()
+      const elem = document.getElementById('qr-reader')
+      if (!elem) return
+
+      const devices = await Html5Qrcode.getCameras()
+      if (!devices || devices.length === 0) {
+        setCameraError('Không tìm thấy thiết bị Camera / Webcam trên máy. Bạn có thể bấm "Quét từ file ảnh QR" hoặc nhập mã đặt chỗ bên dưới.')
+        setStartingCamera(false)
+        return
+      }
+      setCameras(devices)
+      const camId = preferredCameraId || devices[devices.length - 1].id
+      setSelectedCameraId(camId)
+
+      const qr = new Html5Qrcode('qr-reader')
+      html5QrRef.current = qr
+
+      await qr.start(
+        camId,
+        {
+          fps: 10,
+          qrbox: { width: 240, height: 240 },
+          aspectRatio: 1.0,
+        },
+        (decodedText) => {
+          const now = Date.now()
+          if (lastScannedRef.current.text === decodedText && now - lastScannedRef.current.time < 3500) {
+            return
+          }
+          lastScannedRef.current = { text: decodedText, time: now }
+          handleVerify({ qrData: decodedText })
+        },
+        () => {}
+      )
+      setCameraActive(true)
+    } catch (err) {
+      const msg = String(err?.message || err || '')
+      if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('notallowed')) {
+        setCameraError('Trình duyệt đã chặn quyền truy cập Camera. Vui lòng bấm biểu tượng ổ khóa trên thanh địa chỉ Cốc Cốc -> Cho phép Camera, hoặc chọn "Quét từ file ảnh QR".')
+      } else {
+        setCameraError('Không thể mở Camera trực tiếp trên thiết bị này. Bạn có thể chọn "Quét từ file ảnh QR" hoặc nhập mã đơn bên dưới.')
+      }
+    } finally {
+      setStartingCamera(false)
+    }
+  }
+
+  const handleScanImageFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setCameraError('')
+    try {
+      await stopCamera()
+      const qr = new Html5Qrcode('qr-reader')
+      html5QrRef.current = qr
+      const decodedText = await qr.scanFile(file, true)
+      handleVerify({ qrData: decodedText })
+    } catch {
+      setCameraError('Không nhận diện được mã QR trong ảnh đã chọn. Vui lòng chọn ảnh rõ nét hơn hoặc nhập mã đặt chỗ thủ công.')
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
   useEffect(() => {
     if (!isAuthorized) return
-    let scanner = null
     const timer = setTimeout(() => {
-      try {
-        const elem = document.getElementById('qr-reader')
-        if (elem) {
-          scanner = new Html5QrcodeScanner(
-            'qr-reader',
-            {
-              fps: 10,
-              qrbox: { width: 250, height: 250 },
-              rememberLastUsedCamera: true,
-              aspectRatio: 1.0,
-            },
-            false
-          )
-          scannerRef.current = scanner
-
-          scanner.render(
-            (decodedText) => {
-              handleVerify({ qrData: decodedText })
-            },
-            () => {
-              // Bỏ qua log frame trống thường lệ
-            }
-          )
-        }
-      } catch (err) {
-        console.warn('[scanner] Khởi tạo webcam thất bại (có thể do quyền hạn hoặc môi trường headless):', err.message)
-        setCameraError('Không thể mở camera. Bạn có thể dùng chế độ nhập mã thủ công bên dưới.')
-      }
-    }, 200)
-
+      startCamera()
+    }, 300)
     return () => {
       clearTimeout(timer)
-      if (scannerRef.current) {
-        try {
-          scannerRef.current.clear().catch(() => {})
-        } catch {}
-      }
+      stopCamera()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthorized])
@@ -189,17 +251,128 @@ export function StaffScannerPage({ session, onNavigate }) {
         {/* Left Column: Scanner & Manual Input */}
         <div>
           <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: '16px', padding: '24px', boxShadow: '0 4px 20px rgba(0,0,0,0.04)', marginBottom: '24px' }}>
-            <h2 style={{ fontSize: '1.2rem', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Camera size={20} strokeWidth={1.8} /> Camera quét mã QR
-            </h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '14px' }}>
+              <h2 style={{ fontSize: '1.2rem', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Camera size={20} strokeWidth={1.8} /> Camera quét mã QR
+              </h2>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {cameraActive ? (
+                  <button
+                    type="button"
+                    onClick={stopCamera}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '8px 14px',
+                      borderRadius: '8px',
+                      border: '1px solid #ef4444',
+                      background: 'rgba(239, 68, 68, 0.12)',
+                      color: '#ef4444',
+                      fontWeight: 600,
+                      fontSize: '0.88rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <CameraOff size={15} /> Tắt Camera
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={startingCamera}
+                    onClick={() => startCamera()}
+                    className="register-btn"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '8px 14px',
+                      borderRadius: '8px',
+                      fontWeight: 600,
+                      fontSize: '0.88rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <RefreshCw size={15} /> {startingCamera ? 'Đang mở Camera...' : 'Bật Camera quét'}
+                  </button>
+                )}
 
-            {cameraError && (
-              <div style={{ padding: '12px', background: 'rgba(245,158,11,0.18)', color: 'var(--text-primary)', borderRadius: '8px', fontSize: '0.88rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <AlertTriangle size={16} strokeWidth={1.8} /> {cameraError}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={handleScanImageFile}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '8px 14px',
+                    borderRadius: '8px',
+                    border: '1px solid var(--border-default)',
+                    background: 'var(--bg-elevated)',
+                    color: 'var(--text-primary)',
+                    fontWeight: 600,
+                    fontSize: '0.88rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <ImageUp size={15} /> Quét từ ảnh QR
+                </button>
+              </div>
+            </div>
+
+            {cameras.length > 1 && (
+              <div style={{ marginBottom: '12px' }}>
+                <select
+                  value={selectedCameraId}
+                  onChange={(e) => {
+                    const nextId = e.target.value
+                    setSelectedCameraId(nextId)
+                    startCamera(nextId)
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '9px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid var(--border-default)',
+                    background: 'var(--bg-surface)',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.9rem',
+                  }}
+                >
+                  {cameras.map((cam, idx) => (
+                    <option key={cam.id} value={cam.id}>
+                      {cam.label || `Camera ${idx + 1}`}
+                    </option>
+                  ))}
+                </select>
               </div>
             )}
 
-            <div id="qr-reader" style={{ width: '100%', maxWidth: '420px', margin: '0 auto', minHeight: '260px' }}></div>
+            {cameraError && (
+              <div style={{ padding: '12px', background: 'rgba(245,158,11,0.18)', color: 'var(--text-primary)', borderRadius: '8px', fontSize: '0.88rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertTriangle size={16} strokeWidth={1.8} style={{ flexShrink: 0 }} /> <span>{cameraError}</span>
+              </div>
+            )}
+
+            <div
+              id="qr-reader"
+              style={{
+                width: '100%',
+                maxWidth: '420px',
+                margin: '0 auto',
+                minHeight: '260px',
+                borderRadius: '12px',
+                overflow: 'hidden',
+                border: '1px dashed var(--border-default)',
+                background: 'var(--bg-elevated)',
+              }}
+            ></div>
 
             <div style={{ borderTop: '1px solid var(--border-default)', marginTop: '20px', paddingTop: '20px' }}>
               <h3 style={{ fontSize: '1rem', margin: '0 0 10px 0' }}>Hoặc nhập mã đặt chỗ thủ công:</h3>
