@@ -112,12 +112,12 @@ export function StaffScannerPage({ session, onNavigate }) {
       const isMobileDevice = window.innerWidth < 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '')
       if (!preferredCameraId && isMobileDevice) {
         try {
-          await qr.start({ facingMode: 'environment' }, qrConfig, onDecoded, () => {})
+          await qr.start({ facingMode: 'environment' }, qrConfig, onDecoded, () => { })
         } catch {
-          await qr.start(camId, qrConfig, onDecoded, () => {})
+          await qr.start(camId, qrConfig, onDecoded, () => { })
         }
       } else {
-        await qr.start(camId, qrConfig, onDecoded, () => {})
+        await qr.start(camId, qrConfig, onDecoded, () => { })
       }
       setCameraActive(true)
     } catch (err) {

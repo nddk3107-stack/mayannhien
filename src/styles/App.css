@@ -5824,14 +5824,11 @@ html[data-theme="light"] body {
 /* 1. Global Viewport Clamping */
 html,
 body {
-  overflow-x: hidden !important;
-  max-width: 100vw !important;
+  overflow-x: clip;
 }
 
 .app-shell {
-  overflow-x: hidden !important;
-  width: 100% !important;
-  max-width: 100vw !important;
+  width: 100%;
 }
 
 /* 2. Promo Card Cutout Clipping Safeguard */
@@ -14062,22 +14059,24 @@ html[data-theme="light"] .man-dock-loc {
    - Banner cài đặt PWA & Bottom Sheet Thông báo đồng bộ Light / Dark Mode
    ========================================================================== */
 
-html,
-body {
-  overscroll-behavior-y: contain;
-  -webkit-tap-highlight-color: transparent;
-  overflow-x: hidden;
-  max-width: 100vw;
+/* PC LOCK & RESET (>= 768px): Toàn bộ UI Mobile mặc định display: none trên Desktop */
+.mobile-bottom-nav {
+  display: none !important;
 }
 
-.app-shell {
-  overflow-x: hidden;
-  max-width: 100vw;
+.mobile-notif-sheet-overlay {
+  display: none !important;
 }
 
 /* Nút tìm kiếm nhanh chỉ hiển thị trên Mobile (< 768px) */
 .mobile-quick-search-btn {
   display: none;
+}
+
+/* Tự động ngăn tràn ngang không làm đơ cuộn chuột/cảm ứng */
+html,
+body {
+  overflow-x: clip;
 }
 
 /* ----------------------------------------------------- PWA INSTALL BANNER */
@@ -14236,33 +14235,36 @@ body {
 .mobile-notif-sheet-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(2, 6, 23, 0.65);
-  backdrop-filter: blur(6px);
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   z-index: 110;
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  padding: 0 10px calc(76px + env(safe-area-inset-bottom, 0px));
 }
 
 .mobile-notif-sheet {
   width: 100%;
-  max-width: 540px;
-  max-height: 78vh;
+  max-width: 460px;
+  max-height: 65vh;
   background: var(--bg-surface, #ffffff);
   color: var(--text-primary, #0f172a);
-  border-radius: 22px 22px 0 0;
-  border-top: 1px solid rgba(148, 163, 184, 0.25);
-  box-shadow: 0 -14px 40px rgba(2, 6, 23, 0.35);
+  border-radius: 20px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  box-shadow: 0 12px 40px rgba(2, 6, 23, 0.28);
   display: flex;
   flex-direction: column;
-  padding-bottom: calc(74px + env(safe-area-inset-bottom, 0px));
+  overflow: hidden;
   animation: mobileSheetSlideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 [data-theme="dark"] .mobile-notif-sheet {
   background: #0f172a;
   color: #f8fafc;
-  border-top-color: #1e293b;
+  border-color: #1e293b;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.65);
 }
 
 @keyframes mobileSheetSlideUp {
@@ -14446,6 +14448,15 @@ body {
 
 /* ------------------------------------------- MOBILE RESPONSIVE (< 768px) */
 @media (max-width: 767px) {
+  /* Kích hoạt Bottom Nav và Notification Sheet trên Mobile */
+  .mobile-bottom-nav {
+    display: grid !important;
+  }
+
+  .mobile-notif-sheet-overlay {
+    display: flex !important;
+  }
+
   /* Khoảng đệm đáy để Bottom Nav không che khuất nút bấm (Checkout / Lưu / Footer) */
   .app-shell {
     padding-bottom: calc(82px + env(safe-area-inset-bottom, 0px)) !important;
