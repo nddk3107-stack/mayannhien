@@ -1,0 +1,251 @@
+{
+  "summary": {
+    "pass": 37,
+    "fail": 0,
+    "warning": 1
+  },
+  "sections": [
+    {
+      "title": "Phần 1: UI/UX & Responsive",
+      "tests": [
+        {
+          "name": "Giao diện mặc định Desktop (1440x900)",
+          "status": "PASS",
+          "details": "Tải trang chủ thành công, theme hiện tại: dark"
+        },
+        {
+          "name": "Kiểm tra ảnh vỡ Desktop",
+          "status": "PASS",
+          "details": "100% hình ảnh hiển thị trọn vẹn, không vỡ link."
+        },
+        {
+          "name": "Chuyển đổi Light Mode Desktop",
+          "status": "PASS",
+          "details": "Nút chuyển đổi chế độ Sáng/Tối hoạt động mượt mà."
+        },
+        {
+          "name": "Kiểm tra tràn khung ngang Mobile (390x844)",
+          "status": "PASS",
+          "details": "Giao diện co giãn hoàn hảo, không bị tràn thanh cuộn ngang."
+        },
+        {
+          "name": "Chuyển đổi Dark Mode Mobile",
+          "status": "PASS",
+          "details": "Giao diện Tối trên Mobile hiển thị chuẩn độ tương phản."
+        }
+      ]
+    },
+    {
+      "title": "Phần 2: Tài khoản & Hồ sơ cá nhân",
+      "tests": [
+        {
+          "name": "Đăng ký tài khoản khách hàng mới",
+          "status": "PASS",
+          "details": "Tạo tài khoản uat_cust_1795699873220@mayan.test thành công, tự động đăng nhập."
+        },
+        {
+          "name": "Đăng xuất tài khoản",
+          "status": "PASS",
+          "details": "Đăng xuất thành công, giao diện quay về trạng thái khách vãng lai."
+        },
+        {
+          "name": "Đăng nhập lại tài khoản",
+          "status": "PASS",
+          "details": "Đăng nhập thành công với mật khẩu vừa tạo."
+        },
+        {
+          "name": "Quy trình Quên mật khẩu & OTP",
+          "status": "PASS",
+          "details": "Khôi phục mật khẩu thành công bằng mã OTP hệ thống cấp (423064)."
+        }
+      ]
+    },
+    {
+      "title": "Phần 3: Tìm kiếm, Lọc & Dịch vụ",
+      "tests": [
+        {
+          "name": "Đảo chiều điểm đi/đến Vé máy bay",
+          "status": "PASS",
+          "details": "Nút đảo chiều chặng bay hoạt động nhạy bén."
+        },
+        {
+          "name": "Sơ đồ chọn ghế Vé máy bay",
+          "status": "WARNING",
+          "details": "Chưa tìm thấy nút mở sơ đồ ghế."
+        },
+        {
+          "name": "Tìm kiếm & Danh sách Khách sạn",
+          "status": "PASS",
+          "details": "Tải danh sách khách sạn thành công (8 khách sạn hiển thị)."
+        },
+        {
+          "name": "Dịch vụ mở rộng: Vui chơi & Trải nghiệm",
+          "status": "PASS",
+          "details": "Tải dữ liệu thật từ DB/Catalog (5 gói dịch vụ sẵn sàng đặt)."
+        },
+        {
+          "name": "Dịch vụ mở rộng: Đưa đón sân bay",
+          "status": "PASS",
+          "details": "Tải dữ liệu thật từ DB/Catalog (4 gói dịch vụ sẵn sàng đặt)."
+        },
+        {
+          "name": "Dịch vụ mở rộng: Xe khách",
+          "status": "PASS",
+          "details": "Tải dữ liệu thật từ DB/Catalog (4 gói dịch vụ sẵn sàng đặt)."
+        },
+        {
+          "name": "Dịch vụ mở rộng: Tàu hỏa",
+          "status": "PASS",
+          "details": "Tải dữ liệu thật từ DB/Catalog (4 gói dịch vụ sẵn sàng đặt)."
+        },
+        {
+          "name": "Dịch vụ mở rộng: Bảo hiểm du lịch",
+          "status": "PASS",
+          "details": "Tải dữ liệu thật từ DB/Catalog (3 gói dịch vụ sẵn sàng đặt)."
+        }
+      ]
+    },
+    {
+      "title": "Phần 4: Đặt chỗ & Thanh toán",
+      "tests": [
+        {
+          "name": "Xác thực Voucher sai/hết hạn",
+          "status": "PASS",
+          "details": "Báo lỗi chuẩn: \"Mã voucher không tồn tại hoặc đã ngừng hoạt động.\""
+        },
+        {
+          "name": "Xác thực Voucher hợp lệ (SALECUOITUAN - 12%)",
+          "status": "PASS",
+          "details": "Áp dụng thành công voucher giảm 12% (SALECUOITUAN)."
+        },
+        {
+          "name": "Vào trang Checkout dịch vụ",
+          "status": "PASS",
+          "details": "Chuyển hướng vào trang điền thông tin và thanh toán mượt mà."
+        },
+        {
+          "name": "Chọn Voucher ưu đãi trên Checkout UI",
+          "status": "PASS",
+          "details": "Chọn mã ưu đãi trên giao diện checkout thành công."
+        },
+        {
+          "name": "Xử lý đặt chỗ & Lưu đơn hàng",
+          "status": "PASS",
+          "details": "Đơn hàng MAN5370485 tạo thành công trong DB (Tổng tiền: 2.367.200đ, Trạng thái: Đã xác nhận)."
+        },
+        {
+          "name": "Thông báo Real-time trên icon Chuông",
+          "status": "PASS",
+          "details": "Badge thông báo hiển thị số lượng: 1"
+        }
+      ]
+    },
+    {
+      "title": "Phần 5: Hậu mãi & Quản lý đơn",
+      "tests": [
+        {
+          "name": "Trang Đơn đặt chỗ của tôi (#/bookings)",
+          "status": "PASS",
+          "details": "Hiển thị danh sách 1 đơn đặt chỗ thành công."
+        },
+        {
+          "name": "Tải file Vé điện tử E-Ticket PDF",
+          "status": "PASS",
+          "details": "File PDF xuất thành công (65914 bytes, mã QR & thông tin tiếng Việt đầy đủ)."
+        },
+        {
+          "name": "Viết đánh giá (Review) & Lưu DB",
+          "status": "PASS",
+          "details": "Đánh giá 5 sao cho khách sạn \"Marina Bay Đà Nẵng Resort\" đã lưu thành công vào SQLite."
+        },
+        {
+          "name": "Hủy đơn hàng & Giải phóng tồn phòng/ghế",
+          "status": "PASS",
+          "details": "Đơn MAN5370485 đã chuyển trạng thái sang \"Đã hủy\" và giải phóng tài nguyên."
+        }
+      ]
+    },
+    {
+      "title": "Phần 6: Nâng cao & Phân quyền",
+      "tests": [
+        {
+          "name": "AI Travel Planner gợi ý lịch trình thông minh",
+          "status": "PASS",
+          "details": "AI lập kế hoạch du lịch 3 ngày 2 đêm chuẩn ngân sách 5 triệu cho 2 người."
+        },
+        {
+          "name": "Đặt trọn gói 1 chạm từ AI Planner",
+          "status": "PASS",
+          "details": "Tự động tạo đơn đặt trọn gói bao gồm khách sạn và lịch trình gợi ý."
+        },
+        {
+          "name": "Lễ tân: Quét mã QR hợp lệ lần 1",
+          "status": "PASS",
+          "details": "Mã MAN2303289 xác thực check-in thành công."
+        },
+        {
+          "name": "Lễ tân: Quét lại lần 2 (Chặn trùng check-in)",
+          "status": "PASS",
+          "details": "Hệ thống phát hiện vé đã check-in và chặn thành công, hiển thị thời gian check-in trước đó."
+        },
+        {
+          "name": "Lễ tân: Quét mã giả / sai",
+          "status": "PASS",
+          "details": "Từ chối mã không hợp lệ chính xác."
+        },
+        {
+          "name": "Phân quyền RBAC: Chặn Staff truy cập API Admin",
+          "status": "PASS",
+          "details": "Tài khoản Staff bị chặn đúng chuẩn HTTP 403 Forbidden khi cố truy cập số liệu doanh thu / báo cáo admin."
+        },
+        {
+          "name": "Admin Portal truy cập & Dashboard",
+          "status": "PASS",
+          "details": "Vào cổng quản trị Admin thành công, biểu đồ và chỉ số KPI hiển thị đầy đủ."
+        },
+        {
+          "name": "Bảng Audit Log lưu vết thao tác",
+          "status": "PASS",
+          "details": "Hệ thống ghi nhận 5 hoạt động gần nhất (hành động: user.login, user.login, user.login, user.login, user.login)."
+        },
+        {
+          "name": "Xuất báo cáo doanh thu Excel (.xlsx)",
+          "status": "PASS",
+          "details": "Xuất file Excel thành công (10990 bytes, cấu trúc 2 sheet chuẩn định dạng OpenXML)."
+        }
+      ]
+    },
+    {
+      "title": "Phần 7: Tình huống khách hàng thao tác sai",
+      "tests": [
+        {
+          "name": "Chặn tạo trùng đơn khi Double-Click (Idempotency)",
+          "status": "PASS",
+          "details": "Cơ chế Idempotency hoạt động chuẩn xác: Hai lệnh song song chỉ tạo ĐÚNG 1 đơn hàng duy nhất (MAN1357319)."
+        },
+        {
+          "name": "Xử lý bỏ trống trường bắt buộc",
+          "status": "PASS",
+          "details": "Báo lỗi thân thiện: \"Loại dịch vụ không hợp lệ.\" (HTTP 400)"
+        }
+      ]
+    }
+  ],
+  "bugs": [],
+  "consoleErrors": [
+    {
+      "page": "Staff-Scanner",
+      "text": "Failed to load resource: the server responded with a status of 409 (Conflict)"
+    },
+    {
+      "page": "Staff-Scanner",
+      "text": "Failed to load resource: the server responded with a status of 409 (Conflict)"
+    },
+    {
+      "page": "Staff-Scanner",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)"
+    }
+  ],
+  "networkFailures": [],
+  "textAnomalies": []
+}

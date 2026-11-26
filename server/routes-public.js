@@ -1,9 +1,21 @@
 // server/routes-public.js — API công khai: đăng nhập/phiên, catalog, đơn đặt chỗ của người dùng.
 import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+import multer from 'multer'
 import { Router } from 'express'
+import QRCode from 'qrcode'
+import PDFDocument from 'pdfkit'
 import {
-  db, createUser, findUserByEmail, hashPassword, verifyPassword, createSession, deleteSession,
-  publicUser, listCombos, listFlights, listHotels, listPromotions, listRooms, roomOut, SESSION_TTL_MS,
+  db, createUser, findUserByEmail, findUserById, hashPassword, verifyPassword, createSession, deleteSession,
+  publicUser, listCombos, listFlights, listHotels, listPromotions, listRooms, SESSION_TTL_MS,
+  listFlightSeats, lockFlightSeat, releaseFlightSeat, listExtraServices, getExtraService,
+  listHotelReviews, getHotelReviewStats, createHotelReview,
+  createPasswordReset, verifyPasswordReset, consumePasswordReset,
+  listUserNotifications, countUnreadNotifications, markNotificationAsRead, markAllNotificationsAsRead, writeAuditLog,
+  getUserWallet, payWithWallet, depositUserWallet,
+  listSavedPassengers, countSavedPassengers, getSavedPassenger, createSavedPassenger, updateSavedPassenger, deleteSavedPassenger,
+  calculateMemberTier, getTierProgress, addLoyaltyForBooking, revokeAllUserSessions,
 } from './db.js'
 import {
   EMAIL_RE, clearSessionCookie, requireAuth, setSessionCookie,
@@ -12,9 +24,40 @@ import {
 } from './auth.js'
 import { adminRouter } from './routes-admin.js'
 import { paymentRouter } from './routes-payment.js'
+import { staffRouter } from './routes-staff.js'
+import { aiRouter } from './routes-ai.js'
 import { ALLOW_LEGACY_IMPORT, IS_PRODUCTION } from './config.js'
+import { broadcastBookingCreated, broadcastBookingCancelled, pushNotification, realtimeBus, broadcastPaymentReceived } from './realtime.js'
 
 export const publicRouter = Router()
+
+/* ------------------------------------------------ Avatar Upload Setup (Task 2) */
+const avatarStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dest = path.join(process.cwd(), 'server', 'uploads', 'avatars')
+    if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true })
+    cb(null, dest)
+  },
+  filename: (req, file, cb) => {
+    const userId = req.session?.user?.id || 'anon'
+    const ext = path.extname(file.originalname).toLowerCase() || '.jpg'
+    cb(null, `avatar_${userId}_${Date.now()}${ext}`)
+  },
+})
+
+const avatarUpload = multer({
+  storage: avatarStorage,
+  limits: { fileSize: 3 * 1024 * 1024 }, // 3MB
+  fileFilter: (req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp']
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true)
+    } else {
+      cb(new Error('Chỉ chấp nhận file ảnh định dạng JPEG, PNG hoặc WebP.'))
+    }
+  },
+})
+
 
 const SERVICE_NAMES = {
   flight: 'Vé máy bay',
@@ -148,6 +191,7 @@ publicRouter.post('/auth/login', loginIpLimit, async (req, res) => {
   clearLoginFails(key)
   const { token, expiresAt } = createSession(user.id)
   setSessionCookie(res, token, SESSION_TTL_MS)
+  writeAuditLog({ adminId: user.id, adminEmail: user.email, action: 'user.login', targetType: 'user', targetId: String(user.id), detail: 'Đăng nhập thành công', ip: req.ip || '' });
   res.json({ ok: true, user: publicUser(user), expiresAt })
 })
 
@@ -235,7 +279,283 @@ publicRouter.post('/auth/phone', loginIpLimit, async (req, res) => {
 
   const { token, expiresAt } = createSession(user.id)
   setSessionCookie(res, token, SESSION_TTL_MS)
+  writeAuditLog({ adminId: user.id, adminEmail: user.email, action: 'user.login', targetType: 'user', targetId: String(user.id), detail: 'Đăng nhập thành công', ip: req.ip || '' });
   res.json({ ok: true, user: publicUser(user), expiresAt })
+})
+
+/* ------------------------------------------- Profile & Password (Task 4) */
+// GET /api/profile — Lấy thông tin cá nhân & thống kê đơn hàng
+publicRouter.get('/profile', requireAuth, (req, res) => {
+  const user = findUserById(req.session.user.id)
+  if (!user) return bad(res, 'Không tìm thấy người dùng.', 404)
+  const stats = db.prepare(`
+    SELECT COUNT(*) as totalBookings,
+           COALESCE(SUM(CASE WHEN status != 'Đã hủy' THEN total ELSE 0 END), 0) as totalSpent
+    FROM bookings WHERE user_id = ?
+  `).get(user.id)
+
+  res.json({
+    ok: true,
+    user: publicUser(user),
+    wallet: getUserWallet(user.id) || { userId: user.id, balance: 0, transactions: [] },
+    loyalty: getTierProgress(user.total_spent),
+    stats: {
+      totalBookings: stats?.totalBookings || 0,
+      totalSpent: stats?.totalSpent || 0,
+    },
+  })
+})
+
+// PUT /api/profile — Cập nhật họ tên, số điện thoại (Chống Mass Assignment & Validate SĐT VN 10 số)
+publicRouter.put('/profile', requireAuth, (req, res) => {
+  const name = txt(req.body?.name, 60, 2)
+  if (!name) return bad(res, 'Họ và tên bắt buộc và phải từ 2 đến 60 ký tự.')
+  const rawPhone = typeof req.body?.phone === 'string' ? req.body.phone.trim().replace(/\s+/g, '') : ''
+  if (!rawPhone || !/^(0|\+84)[0-9]{9}$/.test(rawPhone)) {
+    return bad(res, 'Số điện thoại Việt Nam bắt buộc và phải hợp lệ (10 chữ số).')
+  }
+
+  // ZERO MASS ASSIGNMENT: chỉ cho phép cập nhật name và phone, client KHÔNG ĐƯỢC phép sửa email, role, points, tier
+  db.prepare(`UPDATE users SET name = ?, phone = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`)
+    .run(name, rawPhone, req.session.user.id)
+
+  const updated = findUserById(req.session.user.id)
+  req.session.user.name = updated.name
+  req.session.user.phone = updated.phone
+  res.json({ ok: true, user: publicUser(updated), message: 'Cập nhật thông tin thành công.' })
+})
+
+/* ------------------------------------------- Avatar Management (Task 2) */
+// POST /api/profile/avatar — Upload ảnh đại diện (Tự động xóa ảnh cũ)
+publicRouter.post('/profile/avatar', requireAuth, (req, res) => {
+  avatarUpload.single('avatar')(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ error: err.message || 'Tải ảnh lên thất bại.' })
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'Vui lòng chọn file ảnh (JPEG, PNG, WebP) tối đa 3MB.' })
+    }
+
+    const userId = Number(req.session.user.id)
+    const user = findUserById(userId)
+    if (!user) return bad(res, 'Không tìm thấy người dùng.', 404)
+
+    // Xóa file ảnh đại diện cũ nếu đã tồn tại
+    if (user.avatar_url && user.avatar_url.startsWith('/uploads/avatars/')) {
+      try {
+        const oldFile = path.join(process.cwd(), 'server', user.avatar_url)
+        if (fs.existsSync(oldFile)) fs.unlinkSync(oldFile)
+      } catch (unlinkErr) {
+        console.warn('[avatar] Lỗi xóa file cũ:', unlinkErr.message)
+      }
+    }
+
+    const avatarUrl = `/uploads/avatars/${req.file.filename}`
+    db.prepare(`UPDATE users SET avatar_url = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`)
+      .run(avatarUrl, userId)
+
+    req.session.user.avatarUrl = avatarUrl
+    req.session.user.avatar_url = avatarUrl
+    realtimeBus.publish('user:avatar:updated', { userId, avatarUrl }, 'all')
+    realtimeBus.publish('user:avatar:updated', { userId, avatarUrl }, `user:${userId}`)
+    writeAuditLog({
+      actorId: userId,
+      actorEmail: user.email,
+      action: 'user.avatar_update',
+      entityType: 'user',
+      entityId: String(userId),
+      detail: `Cập nhật ảnh đại diện: ${avatarUrl}`,
+      ip: req.ip || '',
+    })
+
+    res.json({ ok: true, avatarUrl, message: 'Cập nhật ảnh đại diện thành công.' })
+  })
+})
+
+// DELETE /api/profile/avatar — Xóa ảnh đại diện (Về mặc định, xóa file đĩa)
+publicRouter.delete('/profile/avatar', requireAuth, (req, res) => {
+  const userId = Number(req.session.user.id)
+  const user = findUserById(userId)
+  if (!user) return bad(res, 'Không tìm thấy người dùng.', 404)
+
+  if (user.avatar_url && user.avatar_url.startsWith('/uploads/avatars/')) {
+    try {
+      const oldFile = path.join(process.cwd(), 'server', user.avatar_url)
+      if (fs.existsSync(oldFile)) fs.unlinkSync(oldFile)
+    } catch (unlinkErr) {
+      console.warn('[avatar] Lỗi xóa file đĩa:', unlinkErr.message)
+    }
+  }
+
+  db.prepare(`UPDATE users SET avatar_url = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`)
+    .run(userId)
+
+  req.session.user.avatarUrl = ''
+  req.session.user.avatar_url = ''
+  realtimeBus.publish('user:avatar:updated', { userId, avatarUrl: '' }, 'all')
+  realtimeBus.publish('user:avatar:updated', { userId, avatarUrl: '' }, `user:${userId}`)
+  writeAuditLog({
+    actorId: userId,
+    actorEmail: user.email,
+    action: 'user.avatar_delete',
+    entityType: 'user',
+    entityId: String(userId),
+    detail: 'Xóa ảnh đại diện',
+    ip: req.ip || '',
+  })
+
+  res.json({ ok: true, avatarUrl: null, message: 'Đã xóa ảnh đại diện.' })
+})
+
+/* ------------------------------------------- Saved Passengers (Task 3) */
+// GET /api/profile/passengers — Danh sách hành khách đã lưu
+publicRouter.get('/profile/passengers', requireAuth, (req, res) => {
+  const userId = Number(req.session.user.id)
+  const passengers = listSavedPassengers(userId)
+  res.json({ ok: true, passengers })
+})
+
+// POST /api/profile/passengers — Thêm mới hành khách (Giới hạn tối đa 20)
+publicRouter.post('/profile/passengers', requireAuth, (req, res) => {
+  const userId = Number(req.session.user.id)
+  try {
+    const passenger = createSavedPassenger({
+      userId,
+      fullName: req.body?.fullName,
+      dob: req.body?.dob,
+      gender: req.body?.gender,
+      nationality: req.body?.nationality,
+      idNumber: req.body?.idNumber,
+      phone: req.body?.phone,
+      label: req.body?.label,
+    })
+    realtimeBus.publish('user:passengers:updated', { userId }, `user:${userId}`)
+    res.status(201).json({ ok: true, passenger, message: 'Thêm hành khách đã lưu thành công.' })
+  } catch (err) {
+    return bad(res, err.message, 400)
+  }
+})
+
+// PUT /api/profile/passengers/:id — Cập nhật thông tin hành khách (Chặn IDOR)
+publicRouter.put('/profile/passengers/:id', requireAuth, (req, res) => {
+  const userId = Number(req.session.user.id)
+  const id = Number(req.params.id)
+  try {
+    const passenger = updateSavedPassenger({
+      id,
+      userId,
+      fullName: req.body?.fullName,
+      dob: req.body?.dob,
+      gender: req.body?.gender,
+      nationality: req.body?.nationality,
+      idNumber: req.body?.idNumber,
+      phone: req.body?.phone,
+      label: req.body?.label,
+    })
+    realtimeBus.publish('user:passengers:updated', { userId }, `user:${userId}`)
+    res.json({ ok: true, passenger, message: 'Cập nhật hành khách thành công.' })
+  } catch (err) {
+    return bad(res, err.message, 400)
+  }
+})
+
+// DELETE /api/profile/passengers/:id — Xóa hành khách đã lưu (Chặn IDOR)
+publicRouter.delete('/profile/passengers/:id', requireAuth, (req, res) => {
+  const userId = Number(req.session.user.id)
+  const id = Number(req.params.id)
+  const deleted = deleteSavedPassenger(id, userId)
+  if (!deleted) return bad(res, 'Không tìm thấy hành khách hoặc không có quyền thao tác.', 404)
+  realtimeBus.publish('user:passengers:updated', { userId }, `user:${userId}`)
+  res.json({ ok: true, message: 'Đã xóa hành khách khỏi danh sách lưu.' })
+})
+
+/* ------------------------------------------- Logout All Sessions (Task 4) */
+// POST /api/auth/logout-all — Đăng xuất khỏi tất cả các thiết bị (Tăng token_version)
+publicRouter.post('/auth/logout-all', requireAuth, (req, res) => {
+  const userId = Number(req.session.user.id)
+  const user = findUserById(userId)
+  revokeAllUserSessions(userId)
+  clearSessionCookie(res)
+  writeAuditLog({
+    actorId: userId,
+    actorEmail: user?.email || '',
+    action: 'user.logout_all',
+    entityType: 'user',
+    entityId: String(userId),
+    detail: 'Đăng xuất khỏi tất cả thiết bị thành công (vô hiệu hóa toàn bộ phiên)',
+    ip: req.ip || '',
+  })
+  res.json({ ok: true, message: 'Đã đăng xuất khỏi tất cả các thiết bị an toàn.' })
+})
+
+
+// POST /api/auth/change-password — Đổi mật khẩu
+publicRouter.post('/auth/change-password', requireAuth, async (req, res) => {
+  const currentPassword = String(req.body?.currentPassword || '')
+  const newPassword = String(req.body?.newPassword || '')
+
+  if (!newPassword || newPassword.length < MIN_PASSWORD_LENGTH) {
+    return bad(res, `Mật khẩu mới phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự.`)
+  }
+
+  const user = findUserById(req.session.user.id)
+  if (!user) return bad(res, 'Tài khoản không tồn tại.', 404)
+
+  const match = await verifyPassword(currentPassword, user.password_hash)
+  if (!match) return bad(res, 'Mật khẩu hiện tại không chính xác.', 401)
+
+  const newHash = await hashPassword(newPassword)
+  db.prepare(`UPDATE users SET password_hash = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`)
+    .run(newHash, user.id)
+
+  res.json({ ok: true, message: 'Đổi mật khẩu thành công.' })
+})
+
+// POST /api/auth/forgot-password — Quên mật khẩu: sinh OTP 5 phút
+publicRouter.post('/auth/forgot-password', (req, res) => {
+  const email = txt(req.body?.email, 80, 5)?.toLowerCase()
+  if (!email || !EMAIL_RE.test(email)) return bad(res, 'Email không hợp lệ.')
+
+  const user = findUserByEmail(email)
+  if (!user) {
+    return res.json({ ok: true, message: 'Nếu email tồn tại, mã xác thực đã được tạo.' })
+  }
+
+  const otp = String(Math.floor(100000 + Math.random() * 900000))
+  createPasswordReset(email, otp, 5)
+
+  res.json({
+    ok: true,
+    message: 'Mã xác thực khôi phục mật khẩu có hiệu lực trong 5 phút.',
+    demoOtp: otp,
+    otpHint: otp,
+  })
+})
+
+// POST /api/auth/reset-password — Đặt lại mật khẩu với OTP
+publicRouter.post('/auth/reset-password', async (req, res) => {
+  const email = txt(req.body?.email, 80, 5)?.toLowerCase()
+  const otp = String(req.body?.otp || '').trim()
+  const newPassword = String(req.body?.newPassword || '')
+
+  if (!email || !EMAIL_RE.test(email)) return bad(res, 'Email không hợp lệ.')
+  if (!/^\d{6}$/.test(otp)) return bad(res, 'Mã xác thực phải gồm 6 chữ số.')
+  if (!newPassword || newPassword.length < MIN_PASSWORD_LENGTH) {
+    return bad(res, `Mật khẩu mới phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự.`)
+  }
+
+  const valid = verifyPasswordReset(email, otp)
+  if (!valid) return bad(res, 'Mã xác thực không hợp lệ hoặc đã hết hạn.', 400)
+
+  const user = findUserByEmail(email)
+  if (!user) return bad(res, 'Tài khoản không tồn tại.', 404)
+
+  const newHash = await hashPassword(newPassword)
+  db.prepare(`UPDATE users SET password_hash = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`)
+    .run(newHash, user.id)
+
+  consumePasswordReset(email, otp)
+  res.json({ ok: true, message: 'Đặt lại mật khẩu thành công. Bạn có thể đăng nhập ngay.' })
 })
 
 
@@ -350,14 +670,21 @@ function priceBooking({ serviceType, itemId, passengers, promoCode, room, dates,
     title = row.name
     unitPrice = row.price_override != null ? row.price_override : hotel.price + flight.price - row.saving
     base = unitPrice
-  } else if (['activity', 'car', 'bus', 'train', 'insurance'].includes(serviceType)) {
-    const extraItem = EXTRA_SERVICE_ITEMS[itemId]
-    if (!extraItem || extraItem.serviceType !== serviceType) {
-      return { error: 'Dịch vụ không tồn tại hoặc đã ngừng bán.' }
+  } else if (['activity', 'car', 'bus', 'train', 'insurance', 'tour', 'airport_transfer'].includes(serviceType)) {
+    const dbItem = getExtraService(itemId)
+    if (dbItem && dbItem.is_active) {
+      title = dbItem.name
+      unitPrice = dbItem.price
+      base = (serviceType === 'car' || serviceType === 'airport_transfer') ? dbItem.price : dbItem.price * passengers
+    } else {
+      const extraItem = EXTRA_SERVICE_ITEMS[itemId]
+      if (!extraItem) {
+        return { error: 'Dịch vụ không tồn tại hoặc đã ngừng bán.' }
+      }
+      title = extraItem.title
+      unitPrice = extraItem.price
+      base = serviceType === 'car' ? extraItem.price : extraItem.price * passengers
     }
-    title = extraItem.title
-    unitPrice = extraItem.price
-    base = serviceType === 'car' ? extraItem.price : extraItem.price * passengers
   } else {
     return { error: 'Loại dịch vụ không hợp lệ.' }
   }
@@ -415,11 +742,11 @@ publicRouter.post('/bookings', requireAuth, rateLimitMiddleware('booking', { win
   const strictVoucher = req.body?.strictVoucher === true
   const room = (req.body?.room && typeof req.body.room === 'object')
     ? {
-        roomId: txt(req.body.room.roomId, 64, 2),
-        roomsCount: Number(req.body.room.roomsCount),
-        adults: Number(req.body.room.adults),
-        children: Number(req.body.room.children),
-      }
+      roomId: txt(req.body.room.roomId, 64, 2),
+      roomsCount: Number(req.body.room.roomsCount),
+      adults: Number(req.body.room.adults),
+      children: Number(req.body.room.children),
+    }
     : null
   if (room && !room.roomId) return bad(res, 'Thiếu mã phòng.')
 
@@ -444,16 +771,32 @@ publicRouter.post('/bookings', requireAuth, rateLimitMiddleware('booking', { win
 
   const code = generateBookingCode()
   const nowIso = new Date().toISOString()
+  const seatCode = (serviceType === 'flight' && typeof req.body?.seatCode === 'string') ? req.body.seatCode.trim().toUpperCase() : null
+  const isWallet = paymentMethod.toLowerCase().includes('ví') || paymentMethod.toLowerCase().includes('balance') || paymentMethod.includes('Số dư')
+  const isSepay = paymentMethod.toLowerCase().includes('sepay') || paymentMethod.toLowerCase().includes('vietqr')
+
+  if (isWallet) {
+    const freshUser = findUserById(userId)
+    const curBalance = Number(freshUser?.balance) || 0
+    if (curBalance < priced.total) {
+      return res.status(400).json({
+        error: `Số dư ví Mây An Nhiên không đủ (Hiện có: ${new Intl.NumberFormat('vi-VN').format(curBalance)}đ, Cần: ${new Intl.NumberFormat('vi-VN').format(priced.total)}đ). Vui lòng nạp thêm tiền vào ví qua SePay VietQR.`,
+        code: 'INSUFFICIENT_BALANCE',
+        balance: curBalance,
+        required: priced.total,
+      })
+    }
+  }
 
   // P1-02: kiểm tra tồn kho TẠI THỜI ĐIỂM GHI, bên trong transaction khóa ghi.
   // BEGIN IMMEDIATE lấy khóa viết ngay -> hai request đồng thời seri hoá tại
   // SQLite; kiểm tra trùng lặp + INSERT diễn ra nguyên tử (không có "check rồi
   // insert" tách ra bên ngoài). SQLITE_BUSY -> thử lại, không bao giờ trả 500.
-  const INSERT_COLS = 'code, user_id, service_type, item_id, title, status, payment_method, payment_status, traveler_name, traveler_phone, traveler_email, email, passengers, promo_code, unit_price, discount, total, destination, trip_type, depart_date, return_date, idempotency_key, client_id, created_at, updated_at, room_id, room_name, nights, rooms_count, adults, children'
-  const INSERT_VALUES = '(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+  const INSERT_COLS = 'code, user_id, service_type, item_id, title, status, payment_method, payment_status, traveler_name, traveler_phone, traveler_email, email, passengers, promo_code, unit_price, discount, total, destination, trip_type, depart_date, return_date, idempotency_key, client_id, created_at, updated_at, room_id, room_name, nights, rooms_count, adults, children, seat_code'
+  const INSERT_VALUES = '(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
 
   let created = null
-  let lastErr = null
+  let _lastErr = null
   const MAX_INVENTORY_RETRY = 6
   for (let attempt = 0; attempt < MAX_INVENTORY_RETRY; attempt += 1) {
     try {
@@ -470,13 +813,29 @@ publicRouter.post('/bookings', requireAuth, rateLimitMiddleware('booking', { win
         }
       }
 
+      // Khóa ghế máy bay chống đặt trùng (Overbooking Prevention)
+      if (serviceType === 'flight' && seatCode) {
+        const seatCheck = lockFlightSeat(itemId, seatCode, null)
+        if (!seatCheck.ok) {
+          db.exec('ROLLBACK')
+          return res.status(409).json({
+            error: seatCheck.error || `Ghế ${seatCode} đã có người đặt. Vui lòng chọn ghế khác.`,
+            code: 'SEAT_UNAVAILABLE',
+          })
+        }
+      }
+
       db.prepare(`INSERT INTO bookings (${INSERT_COLS}) VALUES ${INSERT_VALUES}`)
-        .run(code, userId, serviceType, itemId, priced.title, 'Đã xác nhận', paymentMethod, 'simulated',
+        .run(code, userId, serviceType, itemId, priced.title,
+          isWallet ? 'Đã thanh toán' : ((paymentMethod.toLowerCase().includes('sepay') || paymentMethod.toLowerCase().includes('vietqr')) ? 'Chờ thanh toán' : 'Đã xác nhận'),
+          isWallet ? 'Số dư ví Mây An Nhiên' : paymentMethod,
+          isWallet ? 'paid' : ((paymentMethod.toLowerCase().includes('sepay') || paymentMethod.toLowerCase().includes('vietqr')) ? 'pending' : 'simulated'),
           travelerName, travelerPhone, travelerEmail, req.session.user.email, passengers, promoCode,
           priced.unitPrice, priced.discount, priced.total, destination, tripType, depart, ret,
           idempotencyKey, clientId, nowIso, nowIso,
           priced.room?.roomId || null, priced.room?.roomName || '', priced.room?.nights || 0,
-          priced.room?.roomsCount || 0, priced.room?.adults || 0, priced.room?.children || 0)
+          priced.room?.roomsCount || 0, priced.room?.adults || 0, priced.room?.children || 0,
+          seatCode)
       if (priced.promoUsed) {
         // Trừ lượt dùng trong CÙNG transaction với điều kiện giới hạn — nhiều người
         // dùng đồng thời không bao giờ vượt quá usage_limit.
@@ -487,9 +846,14 @@ publicRouter.post('/bookings', requireAuth, rateLimitMiddleware('booking', { win
       }
       db.exec('COMMIT')
       created = db.prepare('SELECT * FROM bookings WHERE code = ?').get(code)
+      if (seatCode && created?.id) {
+        try {
+          db.prepare('UPDATE flight_seats SET booking_id = ? WHERE flight_id = ? AND seat_code = ?').run(created.id, itemId, seatCode)
+        } catch { /* bỏ qua lỗi gán booking_id phụ */ }
+      }
       break
     } catch (err) {
-      lastErr = err
+      _lastErr = err
       try { db.exec('ROLLBACK') } catch { /* không có transaction để hoàn tác */ }
       const msg = String(err?.message || '')
       if ((msg.includes('SQLITE_BUSY') || msg.includes('busy')) && attempt < MAX_INVENTORY_RETRY - 1) {
@@ -513,7 +877,49 @@ publicRouter.post('/bookings', requireAuth, rateLimitMiddleware('booking', { win
       code: 'SERVER_BUSY',
     })
   }
-  res.status(201).json({ ok: true, booking: userBooking(created) })
+  if (isWallet) {
+    try {
+      const payResult = payWithWallet({
+        userId,
+        amount: priced.total,
+        bookingCode: code,
+        description: `Thanh toán đơn ${code} bằng số dư ví Mây An Nhiên`,
+      })
+      const orderId = `WAL_${code}_${Date.now()}`
+      try {
+        db.prepare(`INSERT INTO payment_attempts
+            (booking_code, user_id, provider, order_id, request_id, amount, status, trans_id, env)
+            VALUES (?,?,?,?,?,?,?,?,?)`)
+          .run(code, userId, 'wallet_balance', orderId, orderId, priced.total, 'paid', String(payResult.transactionId), 'production')
+      } catch {}
+      realtimeBus.publish('user:balance:updated', { userId, balance: payResult.balance, deducted: priced.total }, 'all')
+      realtimeBus.publish('user:balance:updated', { userId, balance: payResult.balance, deducted: priced.total }, `user:${userId}`)
+      broadcastPaymentReceived({ bookingCode: code, orderId, amount: priced.total, provider: 'wallet_balance' })
+    } catch (payErr) {
+      console.error('[routes-public] Lỗi trừ số dư ví:', payErr.message)
+    }
+  }
+
+  // Tự động tích lũy điểm thưởng & thăng hạng thành viên nếu đơn đã xác nhận / thanh toán
+  if (isWallet || (created && created.status === 'Đã xác nhận')) {
+    try {
+      addLoyaltyForBooking(userId, priced.total)
+    } catch (loyaltyErr) {
+      console.warn('[loyalty] Lỗi cộng điểm thưởng loyalty:', loyaltyErr.message)
+    }
+  }
+
+  const formatted = userBooking(created)
+  broadcastBookingCreated(formatted)
+  try {
+    pushNotification(userId, {
+      title: 'Đặt chỗ thành công',
+      message: `Đơn hàng ${formatted.code} (${formatted.title}) đã được tạo thành công.`,
+      type: 'booking',
+      link: '#/bookings',
+    })
+  } catch { }
+  res.status(201).json({ ok: true, booking: formatted })
 })
 
 // Người dùng tự hủy đơn của mình — chỉ chủ đơn, không lộ đơn của người khác.
@@ -536,13 +942,210 @@ publicRouter.patch('/bookings/:code/cancel', requireAuth, async (req, res) => {
     }
     db.prepare(`UPDATE bookings SET status = 'Đã hủy',
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`).run(row.id)
+    if (row.seat_code) {
+      try { releaseFlightSeat(row.item_id, row.seat_code) } catch { /* bỏ qua lỗi giải phóng ghế phụ */ }
+    }
     db.exec('COMMIT')
     updated = db.prepare('SELECT * FROM bookings WHERE id = ?').get(row.id)
   } catch (err) {
     try { db.exec('ROLLBACK') } catch { /* không có transaction để hoàn tác */ }
     throw err
   }
+  broadcastBookingCancelled(code, userId)
+  try {
+    pushNotification(userId, {
+      title: 'Đã hủy đơn hàng',
+      message: `Đơn hàng ${code} đã được hủy theo yêu cầu.`,
+      type: 'booking',
+      link: '#/bookings',
+    })
+  } catch { }
   res.json({ ok: true, booking: userBooking(updated) })
+})
+
+/* ----------------------------------------------------------- E-Ticket PDF */
+publicRouter.get('/bookings/:id/eticket', requireAuth, async (req, res) => {
+  const bookingId = Number(req.params.id)
+  const userId = Number(req.session.user.id)
+  const role = req.session.user.role
+
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(bookingId)
+  if (!booking) return bad(res, 'Không tìm thấy đơn hàng.', 404)
+  if (role !== 'admin' && Number(booking.user_id) !== userId) {
+    return bad(res, 'Không tìm thấy đơn hàng.', 404)
+  }
+  if (booking.status === 'Đã hủy') {
+    return bad(res, 'Không thể xuất vé điện tử cho đơn hàng đã bị hủy.', 400)
+  }
+
+  try {
+    const secret = process.env.SESSION_SECRET || 'mayan-secret-key-2025'
+    const qrPayload = {
+      bookingId: booking.id,
+      code: booking.code,
+      passenger: booking.traveler_name,
+      total: booking.total,
+      service: booking.service_type,
+      issuedAt: new Date().toISOString(),
+    }
+    const signature = crypto.createHmac('sha256', secret).update(JSON.stringify(qrPayload)).digest('hex')
+    const qrData = JSON.stringify({ ...qrPayload, sig: signature.slice(0, 32) })
+    const qrBuffer = await QRCode.toBuffer(qrData, {
+      errorCorrectionLevel: 'M',
+      margin: 1,
+      width: 140,
+    })
+
+    const doc = new PDFDocument({ size: 'A4', margin: 40 })
+
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="MayAnNhien-ETicket-${booking.code}.pdf"`)
+    doc.pipe(res)
+
+    const fontRegular = 'C:/Windows/Fonts/arial.ttf'
+    const fontBold = 'C:/Windows/Fonts/arialbd.ttf'
+    const hasUnicode = fs.existsSync(fontRegular)
+    if (hasUnicode) {
+      doc.registerFont('Main', fontRegular)
+      doc.registerFont('MainBold', fontBold)
+      doc.font('Main')
+    }
+
+    const setBold = () => { if (hasUnicode) doc.font('MainBold'); else doc.font('Helvetica-Bold') }
+    const setRegular = () => { if (hasUnicode) doc.font('Main'); else doc.font('Helvetica') }
+
+    // --- Header Banner ---
+    doc.rect(40, 40, 515, 75).fill('#0f766e')
+    setBold()
+    doc.fillColor('#ffffff').fontSize(18).text('MÂY AN NHIÊN · TRAVEL & HOSPITALITY', 55, 55)
+    setRegular()
+    doc.fillColor('#ccfbf1').fontSize(11).text('VÉ ĐIỆN TỬ & XÁC NHẬN ĐẶT CHỖ (E-TICKET / VOUCHER)', 55, 80)
+    doc.fillColor('#ffffff').fontSize(9).text('Hotline: 1900 6868  ·  Email: booking@mayannhien.vn', 55, 96)
+
+    // --- Booking Code & Status Strip ---
+    doc.rect(40, 125, 515, 45).fill('#f1f5f9')
+    setBold()
+    doc.fillColor('#0f172a').fontSize(14).text(`MÃ ĐẶT CHỖ: ${booking.code}`, 55, 138)
+    setRegular()
+    const isPaid = booking.payment_status === 'paid'
+    const statusText = isPaid ? 'ĐÃ THANH TOÁN (MOMO)' : booking.status
+    doc.fillColor(isPaid ? '#047857' : '#0369a1').fontSize(12).text(`TRẠNG THÁI: ${statusText.toUpperCase()}`, 340, 138, { align: 'right', width: 200 })
+
+    // --- Details Box ---
+    doc.rect(40, 180, 340, 240).strokeColor('#cbd5e1').lineWidth(1).stroke()
+    setBold()
+    doc.fillColor('#0f766e').fontSize(12).text('THÔNG TIN CHI TIẾT ĐẶT CHỖ', 55, 195)
+    setRegular()
+
+    let y = 220
+    const addRow = (label, value) => {
+      setBold()
+      doc.fillColor('#475569').fontSize(9).text(label, 55, y, { width: 110 })
+      setRegular()
+      doc.fillColor('#0f172a').fontSize(9).text(String(value || '—'), 170, y, { width: 195 })
+      y += 18
+    }
+
+    addRow('Dịch vụ:', SERVICE_NAMES[booking.service_type] || booking.service_type)
+    addRow('Tiêu đề:', booking.title)
+    if (booking.destination) addRow('Điểm đến:', booking.destination)
+    if (booking.depart_date) addRow('Ngày đi / Nhận:', booking.depart_date)
+    if (booking.return_date) addRow('Ngày về / Trả:', booking.return_date)
+    if (booking.seat_code) addRow('Số ghế đặt:', booking.seat_code)
+    if (booking.room_name) addRow('Loại phòng:', booking.room_name)
+    addRow('Số lượng khách:', `${booking.passengers} hành khách`)
+    addRow('Tổng thanh toán:', formatVND(booking.total))
+
+    // --- QR Code & Check-in Box ---
+    doc.rect(390, 180, 165, 240).strokeColor('#cbd5e1').lineWidth(1).stroke()
+    doc.image(qrBuffer, 403, 195, { width: 138 })
+    setBold()
+    doc.fillColor('#0f766e').fontSize(10).text('CHECK-IN BẢO MẬT', 395, 345, { align: 'center', width: 155 })
+    setRegular()
+    doc.fillColor('#64748b').fontSize(8).text('Quét mã QR tại quầy làm thủ tục hoặc đối tác xuất trình vé.', 395, 362, { align: 'center', width: 155 })
+    doc.fillColor('#059669').fontSize(8).text('Chữ ký số: Đã xác thực (HMAC)', 395, 395, { align: 'center', width: 155 })
+
+    // --- Customer Information Box ---
+    doc.rect(40, 430, 515, 105).strokeColor('#cbd5e1').lineWidth(1).stroke()
+    setBold()
+    doc.fillColor('#0f766e').fontSize(12).text('THÔNG TIN HÀNH KHÁCH / LIÊN HỆ', 55, 445)
+    setRegular()
+
+    let cy = 470
+    setBold()
+    doc.fillColor('#475569').fontSize(9).text('Họ và tên:', 55, cy)
+    setRegular()
+    doc.fillColor('#0f172a').fontSize(9).text(booking.traveler_name, 130, cy)
+
+    setBold()
+    doc.fillColor('#475569').fontSize(9).text('Số điện thoại:', 300, cy)
+    setRegular()
+    doc.fillColor('#0f172a').fontSize(9).text(booking.traveler_phone, 380, cy)
+
+    cy += 20
+    setBold()
+    doc.fillColor('#475569').fontSize(9).text('Email liên hệ:', 55, cy)
+    setRegular()
+    doc.fillColor('#0f172a').fontSize(9).text(booking.traveler_email || booking.email, 130, cy)
+
+    setBold()
+    doc.fillColor('#475569').fontSize(9).text('Mã voucher:', 300, cy)
+    setRegular()
+    doc.fillColor('#0f172a').fontSize(9).text(booking.promo_code || 'Không dùng', 380, cy)
+
+    cy += 20
+    setBold()
+    doc.fillColor('#475569').fontSize(9).text('Ngày xuất vé:', 55, cy)
+    setRegular()
+    doc.fillColor('#0f172a').fontSize(9).text(new Date().toLocaleString('vi-VN'), 130, cy)
+
+    // --- Terms & Notes ---
+    doc.rect(40, 545, 515, 110).fill('#f8fafc')
+    setBold()
+    doc.fillColor('#334155').fontSize(10).text('ĐIỀU KHOẢN & HƯỚNG DẪN QUAN TRỌNG', 55, 555)
+    setRegular()
+    doc.fillColor('#64748b').fontSize(8)
+      .text('1. Vui lòng mang theo CMND/CCCD/Hộ chiếu gốc còn hạn để làm thủ tục nhận phòng hoặc lên máy bay.', 55, 575)
+      .text('2. Đối với chuyến bay: có mặt tại quầy check-in trước giờ khởi hành ít nhất 90 phút (nội địa) hoặc 180 phút (quốc tế).', 55, 590)
+      .text('3. Đối với khách sạn: thời gian nhận phòng tiêu chuẩn từ 14:00 và trả phòng trước 12:00 cùng ngày.', 55, 605)
+      .text('4. Vé điện tử đã được ký số bảo mật, không được tẩy xóa hoặc sửa chữa thông tin.', 55, 620)
+      .text('5. Mọi thắc mắc và hỗ trợ khẩn cấp, vui lòng liên hệ tổng đài 1900 6868 hoặc gửi email hotro@mayannhien.vn.', 55, 635)
+
+    // --- Footer ---
+    doc.rect(40, 750, 515, 0.5).strokeColor('#cbd5e1').stroke()
+    doc.fillColor('#94a3b8').fontSize(8).text(
+      'Cảm ơn quý khách đã tin tưởng và lựa chọn Mây An Nhiên! Chúc quý khách có một chuyến đi trọn vẹn và an yên.',
+      40, 765, { align: 'center', width: 515 }
+    )
+
+    doc.end()
+  } catch (err) {
+    console.error('[eticket] Tạo vé PDF thất bại:', err)
+    if (!res.headersSent) bad(res, 'Không thể tạo vé điện tử. Vui lòng thử lại sau.', 500)
+  }
+})
+
+/* ------------------------------------------------------ Notifications API */
+publicRouter.get('/notifications', requireAuth, (req, res) => {
+  const userId = Number(req.session.user.id)
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100)
+  const items = listUserNotifications(userId, limit)
+  const unreadCount = countUnreadNotifications(userId)
+  res.json({ ok: true, items, unreadCount })
+})
+
+publicRouter.patch('/notifications/:id/read', requireAuth, (req, res) => {
+  const userId = Number(req.session.user.id)
+  const id = String(req.params.id)
+  const updated = markNotificationAsRead(id, userId)
+  const unreadCount = countUnreadNotifications(userId)
+  res.json({ ok: true, updated, unreadCount })
+})
+
+publicRouter.patch('/notifications/read-all', requireAuth, (req, res) => {
+  const userId = Number(req.session.user.id)
+  markAllNotificationsAsRead(userId)
+  res.json({ ok: true, unreadCount: 0 })
 })
 
 // Nhập đơn cũ từ localStorage (chỉ của chính mình, bỏ qua mã đã có) — KHÔNG xóa dữ liệu gốc.
@@ -628,6 +1231,7 @@ publicRouter.get('/catalog', (req, res) => {
     promos: listPromotions(),
     combos: listCombos(),
     rooms: listRooms(),
+    extraServices: listExtraServices(),
     source: 'database',
   })
 })
@@ -639,7 +1243,7 @@ publicRouter.get('/catalog', (req, res) => {
 publicRouter.post('/promos/validate', rateLimitMiddleware('promo-validate', { windowMs: 60_000, max: 30 }), (req, res) => {
   const code = txt(req.body?.code, 24, 2)
   const serviceType = txt(req.body?.serviceType, 16, 3)
-  const amount = Number(req.body?.amount)
+  const amount = Number(req.body?.amount !== undefined ? req.body.amount : req.body?.price)
   if (!code) return bad(res, 'Vui lòng nhập mã voucher.')
   if (!serviceType || !SERVICE_NAMES[serviceType]) return bad(res, 'Loại dịch vụ không hợp lệ.')
   if (!Number.isFinite(amount) || amount < 0 || amount > 1e9) return bad(res, 'Giá trị đơn hàng không hợp lệ.')
@@ -650,6 +1254,7 @@ publicRouter.post('/promos/validate', rateLimitMiddleware('promo-validate', { wi
   const discount = Math.round(amount * evaluated.rate)
   res.json({
     ok: true,
+    promo: { code: evaluated.promo.code, title: evaluated.promo.code, description: evaluated.promo.description, rate: evaluated.rate, minOrder: Number(evaluated.promo.min_order) || 0 },
     voucher: {
       code: evaluated.promo.code,
       title: evaluated.promo.code,
@@ -744,9 +1349,73 @@ publicRouter.get('/rooms/available', (req, res) => {
   })
 })
 
+/* ------------------------------------------- Seats, Extra Services, Reviews */
+// GET /api/flights/:id/seats — Lấy sơ đồ ghế thật từ DB
+publicRouter.get('/flights/:id/seats', (req, res) => {
+  const flightId = String(req.params.id || '').trim()
+  const seats = listFlightSeats(flightId)
+  res.json({ ok: true, flightId, seats })
+})
+
+// GET /api/extra-services — Lấy danh mục dịch vụ mở rộng từ DB
+publicRouter.get('/extra-services', (req, res) => {
+  const category = req.query.category ? String(req.query.category).trim() : null
+  const items = listExtraServices(category)
+  res.json({
+    ok: true,
+    items: items.map((it) => ({
+      ...it,
+      metadata: typeof it.metadata_json === 'string' ? JSON.parse(it.metadata_json || '{}') : (it.metadata_json || {}),
+    })),
+  })
+})
+
+// GET /api/hotels/:id/reviews — Lấy đánh giá khách sạn từ DB
+publicRouter.get('/hotels/:id/reviews', (req, res) => {
+  const hotelId = String(req.params.id || '').trim()
+  const reviews = listHotelReviews(hotelId)
+  const stats = getHotelReviewStats(hotelId)
+  res.json({ ok: true, hotelId, stats, reviews, items: reviews })
+})
+
+// POST /api/hotels/:id/reviews — Gửi đánh giá / phản ánh mới
+publicRouter.post('/hotels/:id/reviews', (req, res) => {
+  const hotelId = String(req.params.id || '').trim()
+  const hotel = db.prepare('SELECT id FROM hotels WHERE id = ?').get(hotelId)
+  if (!hotel) return bad(res, 'Khách sạn không tồn tại.', 404)
+
+  const comment = txt(req.body?.comment || req.body?.text, 1000, 3)
+  if (!comment) return bad(res, 'Nội dung đánh giá cần từ 3 đến 1000 ký tự.')
+  const rating = Math.min(Math.max(Number(req.body?.rating) || 5, 1), 5)
+  const type = req.body?.type === 'feedback' ? 'feedback' : 'review'
+  const category = txt(req.body?.category, 60, 0) || ''
+
+  const user = req.session?.user
+  const userId = user?.id || 1
+  const userName = txt(req.body?.userName, 60, 2) || txt(req.body?.name, 60, 2) || user?.name || 'Khách hàng'
+
+  const created = createHotelReview({
+    hotelId,
+    userId,
+    userName,
+    type,
+    category,
+    rating,
+    comment,
+  })
+  res.status(201).json({ ok: true, review: created })
+})
+
 /* ------------------------------------------------------- admin API (RBAC) */
 // Mọi route /api/admin/* bắt buộc đăng nhập + role='admin' (xem routes-admin.js).
 publicRouter.use('/admin', adminRouter)
+
+/* ------------------------------------------------------- staff API (RBAC) */
+// Mọi route /api/staff/* bắt buộc đăng nhập + role='staff' hoặc 'admin' (xem routes-staff.js).
+publicRouter.use('/staff', staffRouter)
+
+/* ---------------------------------------------------------- AI Planner API */
+publicRouter.use('/ai', aiRouter)
 
 /* --------------------------------------------------------- thanh toán API */
 // /api/payment/* — tạo phiên thanh toán, xem trạng thái, đối soát giao dịch.
@@ -761,3 +1430,9 @@ publicRouter.get('/auth/me', requireAuth, (req, res) => {
 })
 
 export { CLIENT_KEY }
+
+
+
+
+
+

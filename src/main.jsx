@@ -1,7 +1,8 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import './index.css'
+import './styles/index.css'
 import App from './App.jsx'
+import { RealtimeProvider } from './realtime/RealtimeContext.jsx'
 
 // Dọn dữ liệu test/QA còn sót trong localStorage trước khi render app.
 // (Chạy mỗi lần mở trang — vô hại vì tài khoản demo thật không bị khớp.)
@@ -33,6 +34,8 @@ try {
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <App />
+    <RealtimeProvider>
+      <App />
+    </RealtimeProvider>
   </StrictMode>,
 )

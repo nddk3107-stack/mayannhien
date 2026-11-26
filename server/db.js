@@ -1,9 +1,9 @@
 // server/db.js — Tầng dữ liệu SQLite (node:sqlite, có sẵn từ Node 22.5+, không cần dependency ngoài).
 import { DatabaseSync } from 'node:sqlite'
-import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto'
+import { createHash, randomBytes, scrypt, scryptSync, timingSafeEqual } from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
-import { DEFAULT_FLIGHTS, DEFAULT_HOTELS, DEFAULT_PROMOTIONS, DEFAULT_COMBOS, DEFAULT_ROOMS } from './data.js'
+import { DEFAULT_FLIGHTS, DEFAULT_HOTELS, DEFAULT_PROMOTIONS, DEFAULT_COMBOS, DEFAULT_ROOMS, DEFAULT_EXTRA_SERVICES, DEFAULT_REVIEWS } from './data.js'
 import { ROOT } from './config.js'
 
 // Đường dẫn DB: luôn resolve thành đường dẫn TUYỆT ĐỐI để không phụ thuộc thư mục
@@ -27,7 +27,7 @@ db.exec(`
     email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
     name          TEXT NOT NULL,
     password_hash TEXT NOT NULL,
-    role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user','admin')),
+    role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user','staff','admin')),
     is_active     INTEGER NOT NULL DEFAULT 1,
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -119,7 +119,7 @@ db.exec(`
     item_id         TEXT NOT NULL,
     title           TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'Đã xác nhận'
-                    CHECK (status IN ('Đã tạo','Chờ thanh toán','Đã thanh toán','Đã xác nhận','Đã hủy')),
+                    CHECK (status IN ('Đã tạo','Chờ thanh toán','Đã thanh toán','Đã xác nhận','Đã hủy','checked_in')),
     payment_method  TEXT NOT NULL DEFAULT '',
     payment_status  TEXT NOT NULL DEFAULT 'simulated'
                     CHECK (payment_status IN ('pending','simulated','paid','refunded')),
@@ -227,6 +227,67 @@ db.exec(`
     updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   );
   CREATE INDEX IF NOT EXISTS idx_rooms_hotel ON rooms(hotel_id, is_active);
+
+  /* ---------------------------------------------------- Task 1: tables */
+  CREATE TABLE IF NOT EXISTS flight_seats (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    flight_id   TEXT NOT NULL REFERENCES flights(id) ON DELETE CASCADE,
+    seat_code   TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available','locked','booked')),
+    booking_id  INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE(flight_id, seat_code)
+  );
+  CREATE INDEX IF NOT EXISTS idx_flight_seats_lookup ON flight_seats(flight_id, status);
+
+  CREATE TABLE IF NOT EXISTS extra_services (
+    id            TEXT PRIMARY KEY,
+    category      TEXT NOT NULL CHECK (category IN ('tour','airport_transfer','bus','train','insurance','activity','car')),
+    name          TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    price         INTEGER NOT NULL CHECK (price >= 0),
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    is_active     INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_extra_services_cat ON extra_services(category, is_active);
+
+  CREATE TABLE IF NOT EXISTS reviews (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    hotel_id    TEXT NOT NULL REFERENCES hotels(id) ON DELETE CASCADE,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_name   TEXT NOT NULL DEFAULT '',
+    type        TEXT NOT NULL DEFAULT 'review' CHECK (type IN ('review','feedback')),
+    category    TEXT NOT NULL DEFAULT '',
+    rating      INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+    comment     TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_reviews_hotel ON reviews(hotel_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS password_resets (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    email       TEXT NOT NULL,
+    otp         TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    used        INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_pw_resets ON password_resets(email, used);
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    id          TEXT PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL,
+    message     TEXT NOT NULL,
+    type        TEXT NOT NULL DEFAULT 'system' CHECK (type IN ('payment','booking','system','promo')),
+    is_read     INTEGER NOT NULL DEFAULT 0,
+    link        TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read, created_at DESC);
 `)
 
 // Migration dữ liệu cũ (bỏ qua lỗi nếu cột đã tồn tại từ lần chạy trước).
@@ -238,32 +299,131 @@ try {
   ensureColumn('bookings', 'rooms_count', 'INTEGER NOT NULL DEFAULT 1')
   ensureColumn('bookings', 'adults', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('bookings', 'children', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn('bookings', 'seat_code', 'TEXT')
+  ensureColumn('bookings', 'checked_in_at', 'TEXT')
+  ensureColumn('bookings', 'checked_in_by', 'TEXT')
   // Idempotency chống ghi trùng + cột đánh dấu đơn không định giá được (legacy).
   ensureColumn('bookings', 'idempotency_key', 'TEXT')
   ensureColumn('bookings', 'client_id', 'TEXT')
   ensureColumn('bookings', 'legacy', 'INTEGER NOT NULL DEFAULT 0')
   // Voucher: giá trị đơn tối thiểu để áp dụng mã (0 = không giới hạn).
   ensureColumn('promotions', 'min_order', 'INTEGER NOT NULL DEFAULT 0')
+  // Khách sạn: tọa độ GPS và tên thành phố phục vụ định vị vị trí trực tiếp
+  ensureColumn('hotels', 'lat', 'REAL')
+  ensureColumn('hotels', 'lng', 'REAL')
+  ensureColumn('hotels', 'city', 'TEXT')
+  try {
+    for (const h of DEFAULT_HOTELS) {
+      if (h.lat != null && h.lng != null) {
+        db.prepare('UPDATE hotels SET lat = ?, lng = ?, city = ? WHERE id = ? AND (lat IS NULL OR lat = 0)').run(h.lat, h.lng, h.city || '', h.id)
+      }
+    }
+  } catch { /* bỏ qua */ }
 
-  // Users: cột số điện thoại (dùng cho đăng ký / liên hệ).
+  // Users: cột số điện thoại, số dư, avatar, loyalty, tier, token_version
   try {
     const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name)
     if (!userCols.includes('phone')) {
       db.exec(`ALTER TABLE users ADD COLUMN phone TEXT`)
     }
+    if (!userCols.includes('balance')) {
+      db.exec(`ALTER TABLE users ADD COLUMN balance INTEGER NOT NULL DEFAULT 0`)
+    }
+    if (!userCols.includes('avatar_url')) {
+      db.exec(`ALTER TABLE users ADD COLUMN avatar_url TEXT`)
+    }
+    if (!userCols.includes('loyalty_points')) {
+      db.exec(`ALTER TABLE users ADD COLUMN loyalty_points INTEGER NOT NULL DEFAULT 0`)
+    }
+    if (!userCols.includes('total_spent')) {
+      db.exec(`ALTER TABLE users ADD COLUMN total_spent INTEGER NOT NULL DEFAULT 0`)
+    }
+    if (!userCols.includes('member_tier')) {
+      db.exec(`ALTER TABLE users ADD COLUMN member_tier TEXT NOT NULL DEFAULT 'Thành viên'`)
+    }
+    if (!userCols.includes('token_version')) {
+      db.exec(`ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1`)
+    }
   } catch (err) {
-    console.error('[db] migration thêm cột phone thất bại:', err.message)
+    console.error('[db] migration thêm cột users thất bại:', err.message)
   }
-  // Mở rộng CHECK constraint service_type trên bảng bookings cũ để hỗ trợ thêm 5 dịch vụ mới.
+
+  // Bảng saved_passengers (Hành khách đã lưu)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS saved_passengers (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      full_name    TEXT NOT NULL,
+      dob          TEXT,
+      gender       TEXT CHECK (gender IN ('male', 'female', 'other') OR gender IS NULL),
+      nationality  TEXT DEFAULT 'Việt Nam',
+      id_number    TEXT,
+      phone        TEXT,
+      label        TEXT,
+      created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_saved_passengers_user ON saved_passengers(user_id);
+  `)
+
+  // Bảng ví và lịch sử nạp/trừ tiền ví người dùng
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS wallet_transactions (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type           TEXT NOT NULL CHECK (type IN ('deposit', 'payment', 'refund')),
+      amount         INTEGER NOT NULL,
+      balance_after  INTEGER NOT NULL,
+      order_id       TEXT,
+      booking_code   TEXT,
+      reference_code TEXT,
+      description    TEXT,
+      created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_wallet_user ON wallet_transactions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_wallet_ref ON wallet_transactions(reference_code);
+  `)
+  // Mở rộng CHECK constraint role trên bảng users cũ để hỗ trợ staff.
+  try {
+    const userSchemaRow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get()
+    if (userSchemaRow?.sql && !userSchemaRow.sql.includes("'staff'")) {
+      const existingUserCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name)
+      const userColList = existingUserCols.join(', ')
+      db.exec('PRAGMA foreign_keys = OFF')
+      db.exec('BEGIN')
+      db.exec(`
+        CREATE TABLE users_v3 (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
+          name          TEXT NOT NULL,
+          password_hash TEXT NOT NULL,
+          role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user','staff','admin')),
+          is_active     INTEGER NOT NULL DEFAULT 1,
+          created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          phone         TEXT
+        );
+        INSERT INTO users_v3 (${userColList}) SELECT ${userColList} FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_v3 RENAME TO users;
+      `)
+      db.exec('COMMIT')
+      db.exec('PRAGMA foreign_keys = ON')
+    }
+  } catch (err) {
+    try { db.exec('ROLLBACK') } catch { /* bỏ qua */ }
+    try { db.exec('PRAGMA foreign_keys = ON') } catch { /* bỏ qua */ }
+    console.error('[db] migration users role staff thất bại:', err.message)
+  }
+  // Mở rộng CHECK constraint service_type và status trên bảng bookings cũ để hỗ trợ checked_in.
   try {
     const schemaRow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='bookings'").get()
-    if (schemaRow?.sql && !schemaRow.sql.includes("'activity'")) {
+    if (schemaRow?.sql && (!schemaRow.sql.includes("'activity'") || !schemaRow.sql.includes("'checked_in'"))) {
       const existingCols = db.prepare('PRAGMA table_info(bookings)').all().map((c) => c.name)
       const colList = existingCols.join(', ')
       db.exec('PRAGMA foreign_keys = OFF')
       db.exec('BEGIN')
       db.exec(`
-        CREATE TABLE bookings_v2 (
+        CREATE TABLE bookings_v3 (
           id              INTEGER PRIMARY KEY AUTOINCREMENT,
           code            TEXT NOT NULL UNIQUE,
           user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
@@ -271,7 +431,7 @@ try {
           item_id         TEXT NOT NULL,
           title           TEXT NOT NULL,
           status          TEXT NOT NULL DEFAULT 'Đã xác nhận'
-                          CHECK (status IN ('Đã tạo','Chờ thanh toán','Đã thanh toán','Đã xác nhận','Đã hủy')),
+                          CHECK (status IN ('Đã tạo','Chờ thanh toán','Đã thanh toán','Đã xác nhận','Đã hủy','checked_in')),
           payment_method  TEXT NOT NULL DEFAULT '',
           payment_status  TEXT NOT NULL DEFAULT 'simulated'
                           CHECK (payment_status IN ('pending','simulated','paid','refunded')),
@@ -299,11 +459,14 @@ try {
           rooms_count     INTEGER NOT NULL DEFAULT 1,
           adults          INTEGER NOT NULL DEFAULT 0,
           children        INTEGER NOT NULL DEFAULT 0,
+          seat_code       TEXT,
+          checked_in_at   TEXT,
+          checked_in_by   TEXT,
           UNIQUE (user_id, idempotency_key)
         );
-        INSERT INTO bookings_v2 (${colList}) SELECT ${colList} FROM bookings;
+        INSERT INTO bookings_v3 (${colList}) SELECT ${colList} FROM bookings;
         DROP TABLE bookings;
-        ALTER TABLE bookings_v2 RENAME TO bookings;
+        ALTER TABLE bookings_v3 RENAME TO bookings;
         CREATE INDEX IF NOT EXISTS idx_bookings_user ON bookings(user_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
       `)
@@ -313,7 +476,7 @@ try {
   } catch (err) {
     try { db.exec('ROLLBACK') } catch { /* bỏ qua */ }
     try { db.exec('PRAGMA foreign_keys = ON') } catch { /* bỏ qua */ }
-    console.error('[db] migration mở rộng service_type thất bại:', err.message)
+    console.error('[db] migration mở rộng bookings status/service_type thất bại:', err.message)
   }
 } catch (err) {
   console.error('[db] migration thêm cột thất bại:', err.message)
@@ -323,6 +486,12 @@ try {
 // scrypt (memory-hard KDF có sẵn của Node) — không thêm dependency, không để lộ secret ra frontend.
 // Định dạng lưu: scrypt$N$r$p$saltBase64$hashBase64
 const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 32 }
+
+export function hashPasswordSync(plain) {
+  const salt = randomBytes(16)
+  const derived = scryptSync(String(plain), salt, SCRYPT.keylen, { N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p })
+  return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString('base64')}$${derived.toString('base64')}`
+}
 
 export async function hashPassword(plain) {
   const salt = randomBytes(16)
@@ -364,7 +533,21 @@ export function createUser({ email, name, passwordHash, role = 'user', phone = '
 
 // Frontend KHÔNG BAO GIỜ nhận password_hash — chỉ các trường an toàn.
 export const publicUser = (u) =>
-  u && { id: u.id, email: u.email, name: u.name, role: u.role, isActive: !!u.is_active, createdAt: u.created_at }
+  u && {
+    id: u.id,
+    email: u.email,
+    name: u.name,
+    role: u.role,
+    phone: u.phone || '',
+    balance: Number(u.balance) || 0,
+    avatarUrl: u.avatar_url || '',
+    loyaltyPoints: Number(u.loyalty_points) || 0,
+    totalSpent: Number(u.total_spent) || 0,
+    memberTier: u.member_tier || 'Thành viên',
+    tokenVersion: Number(u.token_version) || 1,
+    isActive: !!u.is_active,
+    createdAt: u.created_at,
+  }
 
 /* --------------------------------------------------------------- sessions */
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 ngày
@@ -387,7 +570,21 @@ export function findSessionUser(token) {
     .get(sha256(String(token)))
   if (!row) return null
   if (new Date(row.session_expires_at).getTime() < Date.now()) return null
-  return { id: row.id, email: row.email, name: row.name, role: row.role, is_active: row.is_active, session_expires_at: row.session_expires_at }
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    role: row.role,
+    phone: row.phone || '',
+    balance: Number(row.balance) || 0,
+    avatarUrl: row.avatar_url || '',
+    loyaltyPoints: Number(row.loyalty_points) || 0,
+    totalSpent: Number(row.total_spent) || 0,
+    memberTier: row.member_tier || 'Thành viên',
+    tokenVersion: Number(row.token_version) || 1,
+    is_active: row.is_active,
+    session_expires_at: row.session_expires_at,
+  }
 }
 
 export function touchSession(token) {
@@ -415,6 +612,7 @@ export const hotelOut = (r) =>
     id: r.id, name: r.name, location: r.location, rating: r.rating, stars: r.stars,
     price: r.price, hasPromo: !!r.has_promo, image: r.image,
     perks: JSON.parse(r.perks || '[]'), description: r.description, isActive: !!r.is_active,
+    lat: r.lat ?? null, lng: r.lng ?? null, city: r.city ?? null,
   }
 
 export const flightOut = (r) =>
@@ -667,3 +865,537 @@ export const listPaymentTransactions = (orderId) =>
 export const listAuditLog = (limit = 100) =>
   db.prepare(`SELECT id, actor_id, actor_email, action, entity_type, entity_id, detail, ip, created_at
               FROM audit_log ORDER BY id DESC LIMIT ?`).all(Math.min(Math.max(Number(limit) || 100, 1), 500))
+
+/* -------------------------------------------------- Task 1: Seeds & APIs */
+export function seedFlightSeats() {
+  const flights = db.prepare('SELECT id FROM flights').all()
+  const occupiedDefault = new Set(['1A', '1B', '2C', '3D', '4A', '5E', '6F', '7B', '8C', '9D', '10A'])
+  const insert = db.prepare(`INSERT OR IGNORE INTO flight_seats (flight_id, seat_code, status) VALUES (?,?,?)`)
+  let inserted = 0
+  db.exec('BEGIN')
+  try {
+    for (const f of flights) {
+      for (let row = 1; row <= 12; row += 1) {
+        for (const col of ['A', 'B', 'C', 'D', 'E', 'F']) {
+          const seatCode = `${row}${col}`
+          const status = occupiedDefault.has(seatCode) ? 'booked' : 'available'
+          const res = insert.run(f.id, seatCode, status)
+          if (res.changes > 0) inserted += 1
+        }
+      }
+    }
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+  return inserted
+}
+
+export function seedExtraServices() {
+  if (countRows('extra_services') > 0) return 0
+  const insert = db.prepare(`INSERT OR IGNORE INTO extra_services (id, category, name, description, price, metadata_json) VALUES (?,?,?,?,?,?)`)
+  let inserted = 0
+  db.exec('BEGIN')
+  try {
+    for (const item of DEFAULT_EXTRA_SERVICES) {
+      const res = insert.run(item.id, item.category, item.name, item.description, item.price, JSON.stringify(item.metadata || {}))
+      if (res.changes > 0) inserted += 1
+    }
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+  return inserted
+}
+
+export function seedReviews() {
+  if (countRows('reviews') > 0) return 0
+  const user = db.prepare('SELECT id FROM users LIMIT 1').get()
+  const userId = user ? user.id : 1
+  const insert = db.prepare(`INSERT INTO reviews (hotel_id, user_id, user_name, type, category, rating, comment) VALUES (?,?,?,?,?,?,?)`)
+  let inserted = 0
+  db.exec('BEGIN')
+  try {
+    for (const rev of DEFAULT_REVIEWS) {
+      insert.run(rev.hotelId, userId, rev.userName, rev.type, rev.category || '', rev.rating, rev.comment)
+      inserted += 1
+    }
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+  return inserted
+}
+
+export function listFlightSeats(flightId) {
+  return db.prepare('SELECT flight_id, seat_code, status, booking_id FROM flight_seats WHERE flight_id = ? ORDER BY id ASC').all(flightId)
+}
+
+export function lockFlightSeat(flightId, seatCode, bookingId = null) {
+  const seat = db.prepare('SELECT * FROM flight_seats WHERE flight_id = ? AND seat_code = ?').get(flightId, seatCode)
+  if (!seat) return { ok: false, error: 'Ghế không tồn tại trên chuyến bay này' }
+  if (seat.status !== 'available') return { ok: false, error: 'Ghế ' + seatCode + ' đã có người đặt hoặc đang giữ' }
+  const res = db.prepare(`UPDATE flight_seats SET status = 'booked', booking_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE flight_id = ? AND seat_code = ? AND status = 'available'`).run(bookingId, flightId, seatCode)
+  return { ok: res.changes > 0 }
+}
+
+export function releaseFlightSeat(flightId, seatCode) {
+  const res = db.prepare(`UPDATE flight_seats SET status = 'available', booking_id = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE flight_id = ? AND seat_code = ?`).run(flightId, seatCode)
+  return res.changes > 0
+}
+
+export function listExtraServices(category = null) {
+  if (category) {
+    const norm = category.toLowerCase()
+    return db.prepare('SELECT * FROM extra_services WHERE (category = ? OR category = ?) AND is_active = 1 ORDER BY price ASC')
+      .all(norm, norm === 'tour' ? 'activity' : norm === 'airport_transfer' ? 'car' : norm)
+  }
+  return db.prepare('SELECT * FROM extra_services WHERE is_active = 1 ORDER BY category, price ASC').all()
+}
+
+export function getExtraService(id) {
+  return db.prepare('SELECT * FROM extra_services WHERE id = ?').get(id)
+}
+
+export function createExtraService({ id, category, name, description = '', price, metadata = {}, isActive = 1 }) {
+  db.prepare(`INSERT INTO extra_services (id, category, name, description, price, metadata_json, is_active)
+              VALUES (?,?,?,?,?,?,?)`)
+    .run(id, category, name, description, price, JSON.stringify(metadata || {}), isActive ? 1 : 0)
+  return getExtraService(id)
+}
+
+export function updateExtraService(id, { category, name, description, price, metadata, isActive }) {
+  const cur = getExtraService(id)
+  if (!cur) return null
+  const nextCat = category ?? cur.category
+  const nextName = name ?? cur.name
+  const nextDesc = description ?? cur.description
+  const nextPrice = price ?? cur.price
+  const nextMeta = metadata ? JSON.stringify(metadata) : cur.metadata_json
+  const nextActive = isActive !== undefined ? (isActive ? 1 : 0) : cur.is_active
+
+  db.prepare(`UPDATE extra_services SET category = ?, name = ?, description = ?, price = ?, metadata_json = ?, is_active = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`)
+    .run(nextCat, nextName, nextDesc, nextPrice, nextMeta, nextActive, id)
+  return getExtraService(id)
+}
+
+export function deleteExtraService(id) {
+  const res = db.prepare(`UPDATE extra_services SET is_active = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`).run(id)
+  return res.changes > 0
+}
+
+export function listHotelReviews(hotelId) {
+  return db.prepare(`
+    SELECT r.id, r.hotel_id, r.user_id, r.user_name, r.type, r.category, r.rating, r.comment, r.created_at,
+           u.avatar_url
+    FROM reviews r
+    LEFT JOIN users u ON r.user_id = u.id
+    WHERE r.hotel_id = ?
+    ORDER BY r.created_at DESC, r.id DESC
+  `).all(hotelId)
+}
+
+export function getHotelReviewStats(hotelId) {
+  const stats = db.prepare(`
+    SELECT COUNT(*) as count, COALESCE(AVG(rating), 0) as avgRating
+    FROM reviews
+    WHERE hotel_id = ? AND type = 'review'
+  `).get(hotelId)
+  return {
+    reviewCount: stats?.count || 0,
+    avgRating: Number((stats?.avgRating || 0).toFixed(1)),
+  }
+}
+
+export function createHotelReview({ hotelId, userId, userName, type = 'review', category = '', rating = 5, comment = '' }) {
+  const cleanRating = Math.min(Math.max(Number(rating) || 5, 1), 5)
+  const cleanType = ['review', 'feedback'].includes(type) ? type : 'review'
+  const res = db.prepare(`
+    INSERT INTO reviews (hotel_id, user_id, user_name, type, category, rating, comment)
+    VALUES (?,?,?,?,?,?,?)
+  `).run(hotelId, Number(userId), String(userName || 'Khách hàng'), cleanType, String(category || ''), cleanRating, String(comment || ''))
+
+  const stats = getHotelReviewStats(hotelId)
+  if (stats.avgRating > 0) {
+      db.prepare(`UPDATE hotels SET rating = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`).run(stats.avgRating, hotelId)
+  }
+  return db.prepare('SELECT * FROM reviews WHERE id = ?').get(res.lastInsertRowid)
+}
+
+export function createPasswordReset(email, otp, ttlMinutes = 5) {
+  const user = findUserByEmail(email)
+  if (!user) return null
+  const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString()
+  db.prepare(`UPDATE password_resets SET used = 1 WHERE email = ? AND used = 0`).run(email)
+  const res = db.prepare(`INSERT INTO password_resets (user_id, email, otp, expires_at) VALUES (?,?,?,?)`)
+    .run(user.id, email, otp, expiresAt)
+  return { id: res.lastInsertRowid, email, expiresAt }
+}
+
+export function verifyPasswordReset(email, otp) {
+  const row = db.prepare(`
+    SELECT * FROM password_resets 
+    WHERE email = ? AND otp = ? AND used = 0 AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    ORDER BY id DESC LIMIT 1
+  `).get(email, otp)
+  return row || null
+}
+
+export function consumePasswordReset(email, otp) {
+  const row = verifyPasswordReset(email, otp)
+  if (!row) return false
+  db.prepare(`UPDATE password_resets SET used = 1 WHERE id = ?`).run(row.id)
+  return true
+}
+
+/* ------------------------------------------------ notifications & audit APIs */
+export function createNotification({ userId, title, message, type = 'system', link = '' }) {
+  const id = `notif-${randomBytes(6).toString('hex')}`
+  const validTypes = ['payment', 'booking', 'system', 'promo']
+  const cleanType = validTypes.includes(type) ? type : 'system'
+  db.prepare(`
+    INSERT INTO notifications (id, user_id, title, message, type, is_read, link)
+    VALUES (?, ?, ?, ?, ?, 0, ?)
+  `).run(id, Number(userId), String(title), String(message), cleanType, String(link || ''))
+  return db.prepare('SELECT * FROM notifications WHERE id = ?').get(id)
+}
+
+export function listUserNotifications(userId, limit = 50) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100)
+  return db.prepare(`
+    SELECT * FROM notifications
+    WHERE user_id = ?
+    ORDER BY created_at DESC, id DESC
+    LIMIT ?
+  `).all(Number(userId), safeLimit)
+}
+
+export function countUnreadNotifications(userId) {
+  const row = db.prepare(`
+    SELECT COUNT(*) AS c FROM notifications
+    WHERE user_id = ? AND is_read = 0
+  `).get(Number(userId))
+  return row?.c || 0
+}
+
+export function markNotificationAsRead(id, userId) {
+  const res = db.prepare(`
+    UPDATE notifications SET is_read = 1
+    WHERE id = ? AND user_id = ?
+  `).run(String(id), Number(userId))
+  return res.changes > 0
+}
+
+export function markAllNotificationsAsRead(userId) {
+  const res = db.prepare(`
+    UPDATE notifications SET is_read = 1
+    WHERE user_id = ? AND is_read = 0
+  `).run(Number(userId))
+  return res.changes > 0
+}
+
+export function listAuditLogsFiltered({ page = 1, limit = 20, action = null, actor = null, fromDate = null, toDate = null }) {
+  const safePage = Math.max(Number(page) || 1, 1)
+  const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100)
+  const where = []
+  const args = []
+
+  if (action && action.trim()) {
+    where.push('action LIKE ?')
+    args.push(`%${action.trim()}%`)
+  }
+  if (actor && actor.trim()) {
+    where.push('(actor_email LIKE ? OR CAST(actor_id AS TEXT) LIKE ?)')
+    args.push(`%${actor.trim()}%`, `%${actor.trim()}%`)
+  }
+  if (fromDate && fromDate.trim()) {
+    where.push('substr(created_at, 1, 10) >= ?')
+    args.push(fromDate.trim())
+  }
+  if (toDate && toDate.trim()) {
+    where.push('substr(created_at, 1, 10) <= ?')
+    args.push(toDate.trim())
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
+  const total = db.prepare(`SELECT COUNT(*) AS c FROM audit_log ${whereSql}`).get(...args)?.c || 0
+  const items = db.prepare(`
+    SELECT id, actor_id, actor_email, action, entity_type, entity_id, detail, ip, created_at
+    FROM audit_log
+    ${whereSql}
+    ORDER BY id DESC
+    LIMIT ? OFFSET ?
+  `).all(...args, safeLimit, (safePage - 1) * safeLimit)
+
+  return { items, total, page: safePage, limit: safeLimit }
+}
+
+/* ------------------------------------------------------------- Wallet (Ví số dư) */
+
+export function getUserWallet(userId) {
+  const user = db.prepare('SELECT id, email, name, balance FROM users WHERE id = ?').get(userId)
+  if (!user) return null
+  const transactions = db.prepare(`SELECT * FROM wallet_transactions WHERE user_id = ? ORDER BY id DESC LIMIT 50`).all(userId)
+  return {
+    userId: user.id,
+    balance: Number(user.balance) || 0,
+    transactions,
+  }
+}
+
+export function depositUserWallet({ userId, amount, referenceCode = '', description = '', source = 'deposit' }) {
+  const depositAmount = Math.min(Math.max(Number(amount) || 0, 0), 10_000_000_000)
+  if (depositAmount <= 0) throw new Error('Số tiền nạp phải lớn hơn 0.')
+
+  // Kiểm tra trùng lặp referenceCode (nếu có)
+  if (referenceCode) {
+    const existing = db.prepare('SELECT * FROM wallet_transactions WHERE user_id = ? AND reference_code = ?').get(userId, referenceCode)
+    if (existing) {
+      const user = db.prepare('SELECT balance FROM users WHERE id = ?').get(userId)
+      return { ok: true, duplicate: true, balance: Number(user.balance) || 0, transactionId: existing.id }
+    }
+  }
+
+  db.exec('BEGIN')
+  try {
+    const user = db.prepare('SELECT id, balance FROM users WHERE id = ?').get(userId)
+    if (!user) throw new Error('Không tìm thấy người dùng.')
+
+    const newBalance = (Number(user.balance) || 0) + depositAmount
+    db.prepare(`UPDATE users SET balance = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`).run(newBalance, userId)
+
+    const res = db.prepare(`
+      INSERT INTO wallet_transactions (user_id, type, amount, balance_after, reference_code, description)
+      VALUES (?, 'deposit', ?, ?, ?, ?)
+    `).run(userId, depositAmount, newBalance, String(referenceCode || ''), String(description || `Nạp tiền qua SePay VietQR (${source})`))
+
+    db.exec('COMMIT')
+    return { ok: true, balance: newBalance, added: depositAmount, transactionId: res.lastInsertRowid }
+  } catch (err) {
+    try { db.exec('ROLLBACK') } catch {}
+    throw err
+  }
+}
+
+export function payWithWallet({ userId, amount, bookingCode, description = '' }) {
+  const payAmount = Number(amount) || 0
+  if (payAmount <= 0) throw new Error('Số tiền thanh toán phải lớn hơn 0.')
+
+  db.exec('BEGIN')
+  try {
+    const user = db.prepare('SELECT id, balance FROM users WHERE id = ?').get(userId)
+    if (!user) throw new Error('Không tìm thấy người dùng.')
+
+    const currentBalance = Number(user.balance) || 0
+    if (currentBalance < payAmount) {
+      throw new Error(`Số dư ví không đủ (hiện có: ${currentBalance}đ, cần: ${payAmount}đ). Vui lòng nạp thêm tiền.`)
+    }
+
+    const newBalance = currentBalance - payAmount
+    db.prepare(`UPDATE users SET balance = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`).run(newBalance, userId)
+
+    const res = db.prepare(`
+      INSERT INTO wallet_transactions (user_id, type, amount, balance_after, booking_code, description)
+      VALUES (?, 'payment', ?, ?, ?, ?)
+    `).run(userId, -payAmount, newBalance, String(bookingCode || ''), String(description || `Thanh toán đơn ${bookingCode} bằng số dư ví`))
+
+    db.exec('COMMIT')
+    return { ok: true, balance: newBalance, deducted: payAmount, transactionId: res.lastInsertRowid }
+  } catch (err) {
+    try { db.exec('ROLLBACK') } catch {}
+    throw err
+  }
+}
+
+/* --------------------------------------------------- Saved Passengers (Hành khách đã lưu) */
+export function listSavedPassengers(userId) {
+  return db.prepare('SELECT * FROM saved_passengers WHERE user_id = ? ORDER BY id DESC').all(Number(userId))
+}
+
+export function countSavedPassengers(userId) {
+  const row = db.prepare('SELECT COUNT(*) as cnt FROM saved_passengers WHERE user_id = ?').get(Number(userId))
+  return Number(row?.cnt) || 0
+}
+
+export function getSavedPassenger(id, userId) {
+  return db.prepare('SELECT * FROM saved_passengers WHERE id = ? AND user_id = ?').get(Number(id), Number(userId))
+}
+
+export function createSavedPassenger({ userId, fullName, dob = null, gender = null, nationality = 'Việt Nam', idNumber = null, phone = null, label = 'Bản thân' }) {
+  const count = countSavedPassengers(userId)
+  if (count >= 20) throw new Error('Đã đạt giới hạn tối đa 20 hành khách đã lưu.')
+
+  const trimmedName = String(fullName || '').trim()
+  if (trimmedName.length < 2) throw new Error('Họ và tên hành khách phải có ít nhất 2 ký tự.')
+
+  const res = db.prepare(`
+    INSERT INTO saved_passengers (user_id, full_name, dob, gender, nationality, id_number, phone, label)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    Number(userId),
+    trimmedName,
+    dob ? String(dob).trim() : null,
+    gender && ['male', 'female', 'other'].includes(gender) ? gender : null,
+    nationality ? String(nationality).trim() : 'Việt Nam',
+    idNumber ? String(idNumber).trim() : null,
+    phone ? String(phone).trim() : null,
+    label ? String(label).trim() : 'Bản thân'
+  )
+  return getSavedPassenger(res.lastInsertRowid, userId)
+}
+
+export function updateSavedPassenger({ id, userId, fullName, dob, gender, nationality, idNumber, phone, label }) {
+  const existing = getSavedPassenger(id, userId)
+  if (!existing) throw new Error('Không tìm thấy thông tin hành khách.')
+
+  const trimmedName = String(fullName || '').trim()
+  if (trimmedName.length < 2) throw new Error('Họ và tên hành khách phải có ít nhất 2 ký tự.')
+
+  db.prepare(`
+    UPDATE saved_passengers
+    SET full_name = ?, dob = ?, gender = ?, nationality = ?, id_number = ?, phone = ?, label = ?
+    WHERE id = ? AND user_id = ?
+  `).run(
+    trimmedName,
+    dob ? String(dob).trim() : null,
+    gender && ['male', 'female', 'other'].includes(gender) ? gender : null,
+    nationality ? String(nationality).trim() : 'Việt Nam',
+    idNumber ? String(idNumber).trim() : null,
+    phone ? String(phone).trim() : null,
+    label ? String(label).trim() : 'Bản thân',
+    Number(id),
+    Number(userId)
+  )
+  return getSavedPassenger(id, userId)
+}
+
+export function deleteSavedPassenger(id, userId) {
+  const res = db.prepare('DELETE FROM saved_passengers WHERE id = ? AND user_id = ?').run(Number(id), Number(userId))
+  return Number(res.changes) > 0
+}
+
+/* ------------------------------------------------ Loyalty Points & Tier (Hạng thành viên) */
+export function calculateMemberTier(totalSpent) {
+  const spent = Number(totalSpent) || 0
+  if (spent >= 30_000_000) return 'Kim Cương'
+  if (spent >= 15_000_000) return 'Vàng'
+  if (spent >= 5_000_000) return 'Bạc'
+  return 'Thành viên'
+}
+
+export function getTierProgress(totalSpent) {
+  const spent = Number(totalSpent) || 0
+  const tier = calculateMemberTier(spent)
+  let nextTier = 'Bạc'
+  let nextThreshold = 5_000_000
+  let prevThreshold = 0
+
+  if (tier === 'Bạc') {
+    nextTier = 'Vàng'
+    prevThreshold = 5_000_000
+    nextThreshold = 15_000_000
+  } else if (tier === 'Vàng') {
+    nextTier = 'Kim Cương'
+    prevThreshold = 15_000_000
+    nextThreshold = 30_000_000
+  } else if (tier === 'Kim Cương') {
+    nextTier = null
+    prevThreshold = 30_000_000
+    nextThreshold = 30_000_000
+  }
+
+  const range = Math.max(nextThreshold - prevThreshold, 1)
+  const currentInRange = Math.max(spent - prevThreshold, 0)
+  const percent = nextTier ? Math.min(Math.round((currentInRange / range) * 100), 100) : 100
+  const needed = nextTier ? Math.max(nextThreshold - spent, 0) : 0
+
+  return {
+    tier,
+    nextTier,
+    currentSpent: spent,
+    totalSpent: spent,
+    prevThreshold,
+    nextThreshold,
+    percent,
+    progressPct: percent,
+    needed,
+  }
+}
+
+export function addLoyaltyForBooking(userId, bookingTotal) {
+  const total = Number(bookingTotal) || 0
+  if (total <= 0) return null
+
+  const pointsToAdd = Math.round(total * 0.01) // 1% giá trị đơn hàng
+
+  db.exec('BEGIN')
+  try {
+    const user = db.prepare('SELECT id, loyalty_points, total_spent, member_tier FROM users WHERE id = ?').get(Number(userId))
+    if (!user) throw new Error('Không tìm thấy người dùng để cộng điểm.')
+
+    const oldTier = user.member_tier || 'Thành viên'
+    const newTotalSpent = (Number(user.total_spent) || 0) + total
+    const newPoints = (Number(user.loyalty_points) || 0) + pointsToAdd
+    const newTier = calculateMemberTier(newTotalSpent)
+
+    db.prepare(`
+      UPDATE users
+      SET loyalty_points = ?, total_spent = ?, member_tier = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE id = ?
+    `).run(newPoints, newTotalSpent, newTier, Number(userId))
+
+    db.exec('COMMIT')
+    return {
+      pointsAdded: pointsToAdd,
+      newPoints,
+      newTotalSpent,
+      oldTier,
+      newTier,
+      tierUpgraded: oldTier !== newTier,
+    }
+  } catch (err) {
+    try { db.exec('ROLLBACK') } catch {}
+    console.error('[loyalty] Lỗi cộng điểm thưởng:', err.message)
+    return null
+  }
+}
+
+/* ------------------------------------------------ Security: Revoke All Sessions */
+export function revokeAllUserSessions(userId) {
+  db.exec('BEGIN')
+  try {
+    db.prepare("UPDATE users SET token_version = token_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(Number(userId))
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(Number(userId))
+    db.exec('COMMIT')
+    return true
+  } catch (err) {
+    try { db.exec('ROLLBACK') } catch {}
+    throw err
+  }
+}
+
+// Khởi chạy seed bổ sung an toàn (idempotent)
+export function seedStaffUser() {
+  const existing = db.prepare('SELECT id, role FROM users WHERE email = ? COLLATE NOCASE').get('staff@mayannhien.vn')
+  if (!existing) {
+    const pwHash = hashPasswordSync('staff-password-123')
+    db.prepare(`
+      INSERT INTO users (email, name, password_hash, role, phone, is_active)
+      VALUES (?, ?, ?, 'staff', '0901234567', 1)
+    `).run('staff@mayannhien.vn', 'Lễ tân Mây An Nhiên', pwHash)
+  } else if (existing.role !== 'staff') {
+    db.prepare("UPDATE users SET role = 'staff' WHERE id = ?").run(existing.id)
+  }
+}
+
+try {
+  seedFlightSeats()
+  seedExtraServices()
+  seedReviews()
+  seedStaffUser()
+} catch {
+  // Bỏ qua lỗi nếu bảng chưa sẵn sàng trong mock/test runner
+}

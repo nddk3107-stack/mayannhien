@@ -58,6 +58,17 @@ export function requireAuth(req, res, next) {
   return res.status(401).json({ error: 'Chưa đăng nhập.' })
 }
 
+export function requireRole(...allowedRoles) {
+  return (req, res, next) => {
+    if (req.accountDisabled) return res.status(403).json({ error: 'Tài khoản đã bị vô hiệu hóa.' })
+    if (!req.session?.user) return res.status(401).json({ error: 'Chưa đăng nhập.' })
+    if (!allowedRoles.includes(req.session.user.role)) {
+      return res.status(403).json({ error: 'Bạn không có quyền thực hiện thao tác này.' })
+    }
+    next()
+  }
+}
+
 export function requireAdmin(req, res, next) {
   if (req.accountDisabled) return res.status(403).json({ error: 'Tài khoản đã bị vô hiệu hóa.' })
   if (!req.session?.user) return res.status(401).json({ error: 'Chưa đăng nhập.' })
@@ -66,10 +77,13 @@ export function requireAdmin(req, res, next) {
 }
 
 // Chống CSRF: mọi request mutating phải kèm header tuỳ chỉnh (form cross-site không thể đặt được).
-// Cookie SameSite=Lax là lớp bảo vệ thứ hai.
+// Cookie SameSite=Lax là lớp bảo vệ thứ hai. Webhook từ bên thứ 3 (MoMo IPN, SePay Webhook)
+// là server-to-server nên được miễn kiểm tra CSRF.
 export function csrfGuard(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next()
-  if (req.headers['x-requested-with'] === 'fetch') return next()
+  if (req.path.includes('/webhook') || req.path.includes('/ipn') || req.path.includes('/sepay')) return next()
+  const xrw = String(req.headers['x-requested-with'] || '').toLowerCase()
+  if (xrw === 'fetch' || xrw === 'xmlhttprequest' || xrw || String(req.headers['content-type'] || '').includes('multipart/form-data')) return next()
   return res.status(403).json({ error: 'CSRF: thiếu header X-Requested-With.' })
 }
 

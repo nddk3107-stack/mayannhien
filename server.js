@@ -3,14 +3,16 @@
 // server/security.js (headers/CSP/CORS), server/momo.js (thanh toán),
 // server/routes-public.js (API công khai), server/routes-admin.js (API quản trị).
 import express from 'express'
+import http from 'node:http'
 import path from 'node:path'
 import fs from 'node:fs'
 import { ROOT, PORT, IS_PRODUCTION, TRUST_PROXY_HOPS } from './server/config.js'
-import { seedCatalogIfEmpty, seedRooms } from './server/db.js'
+import { seedCatalogIfEmpty, seedRooms, seedStaffUser } from './server/db.js'
 import { csrfGuard, sessionMiddleware, sweepRateBuckets } from './server/auth.js'
 import { securityHeaders, corsGuard } from './server/security.js'
 import { publicRouter } from './server/routes-public.js'
-import { momoIpnRouter } from './server/routes-payment.js'
+import { momoIpnRouter, sepayWebhookRouter } from './server/routes-payment.js'
+import { initRealtimeServer } from './server/realtime.js'
 
 const app = express()
 app.disable('x-powered-by')
@@ -23,10 +25,11 @@ app.use(securityHeaders)
 app.use(corsGuard)
 app.use(express.json({ limit: '256kb' }))
 
-// IPN webhook của MoMo: đăng ký TRƯỚC csrfGuard vì MoMo là server-to-server,
-// không gửi header X-Requested-With. Bảo mật ở đây dựa vào chữ ký HMAC
-// (xem server/momo.js) — không dựa vào header tuỳ chỉnh.
+// Webhook của MoMo & SePay: đăng ký TRƯỚC csrfGuard vì server-to-server,
+// không gửi header X-Requested-With.
 app.use('/api/webhook', momoIpnRouter)
+app.use('/api/webhook', sepayWebhookRouter)
+app.use('/api/payment/sepay/webhook', sepayWebhookRouter)
 
 // Webhook của MoMo: nếu express.json() ném lỗi (payload JSON hỏng / quá lớn)
 // thì MoMo coi là "chưa nhận được" và GỌI LẠI liên tục -> phải trả HTTP 200.
@@ -58,6 +61,14 @@ if (seeded) console.log('[db] đã seed dữ liệu catalog mặc định vào S
 // Đảm bảo mọi khách sạn đều có phòng (DB cũ + khách sạn admin tạo sau) — idempotent.
 const seededRooms = seedRooms()
 if (seededRooms) console.log(`[db] đã seed ${seededRooms} phòng`)
+seedStaffUser()
+
+// Thư mục lưu trữ upload tĩnh (Avatar người dùng...)
+const uploadsDir = path.join(process.cwd(), 'server', 'uploads')
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true })
+const avatarsDir = path.join(uploadsDir, 'avatars')
+if (!fs.existsSync(avatarsDir)) fs.mkdirSync(avatarsDir, { recursive: true })
+app.use('/uploads', express.static(uploadsDir))
 
 // Mọi API công khai + /api/admin/* (bị chặn bởi requireAdmin trong routes-admin.js).
 app.use('/api', publicRouter)
@@ -87,10 +98,14 @@ app.use((err, req, res, _next) => {
     return res.status(413).json({ error: 'Dữ liệu gửi lên quá lớn.' })
   }
   console.error('[api-error]', err?.message || err)
-  res.status(500).json({ error: 'Lõi máy chủ. Vui lòng thử lại.' })
+  res.status(500).json({ error: 'Lỗi máy chủ. Vui lòng thử lại.' })
 })
 
-app.listen(PORT, () => {
+const httpServer = http.createServer(app)
+initRealtimeServer(httpServer, app)
+
+httpServer.listen(PORT, () => {
   console.log(`Mây An Nhiên API chạy tại http://localhost:${PORT} (SQLite: data/mayan.db)`)
+  console.log(`Real-Time WebSocket chạy tại ws://localhost:${PORT}/api/realtime/ws`)
   if (IS_PRODUCTION) console.log('[config] NODE_ENV=production — cần HTTPS + reverse proxy phía trước.')
 })

@@ -29,8 +29,10 @@ dist-ssr
 !.env.example
 
 # Database SQLite (du lieu local, khong commit)
-data/
+/data/
 backup/
+!src/data/
 
-# Evidence QA (anh chup local)
-qa-evidence/*.png
+# Evidence QA & UI Audit (anh chup local)
+qa-evidence/
+ui-audit/

@@ -13,9 +13,22 @@
 // 10. Giao dịch sandbox KHÔNG được tính vào doanh thu thật.
 import { Router } from 'express'
 import express from 'express'
-import { db, getPaymentAttempt, updatePaymentAttempt, recordPaymentTransaction, listPaymentTransactions, writeAuditLog } from './db.js'
+import {
+  db,
+  getPaymentAttempt,
+  updatePaymentAttempt,
+  recordPaymentTransaction,
+  listPaymentTransactions,
+  writeAuditLog,
+  getUserWallet,
+  depositUserWallet,
+  payWithWallet,
+  addLoyaltyForBooking,
+} from './db.js'
 import { requireAuth, rateLimitMiddleware } from './auth.js'
 import { createPayment, newOrderId, newRequestId, queryPayment, verifyIpn, MOMO_ENABLED, MOMO_LIVE_ENABLED, MOMO_CONFIG } from './momo.js'
+import { pushNotification, broadcastPaymentReceived, broadcastBookingUpdated, realtimeBus } from './realtime.js'
+import { SEPAY_CONFIG } from './config.js'
 
 export const paymentRouter = Router()
 
@@ -38,6 +51,13 @@ paymentRouter.get('/config', (req, res) => {
     provider: 'momo',
     env: MOMO_CONFIG.env,
     currency: 'VND',
+    sepay: {
+      enabled: true,
+      bank: SEPAY_CONFIG.bank,
+      accNumber: SEPAY_CONFIG.accNumber,
+      accName: SEPAY_CONFIG.accName,
+      gatewayUrl: SEPAY_CONFIG.gatewayUrl,
+    },
   })
 })
 
@@ -252,6 +272,17 @@ async function handleMomoIpn(req, res) {
     recordPaymentTransaction({ orderId, bookingCode: attempt.booking_code, status: 'paid', amount, transId: ipn.transId, resultCode, source: 'ipn' })
     writeAuditLog({ actorId: attempt.user_id, action: 'payment.paid', entityType: 'booking', entityId: attempt.booking_code, detail: `order=${orderId} transId=${ipn.transId || ''}`, ip: req.ip })
     db.exec('COMMIT')
+    try {
+      pushNotification(attempt.user_id, {
+        title: 'Thanh toán thành công',
+        message: `Đơn ${attempt.booking_code} đã được thanh toán thành công qua MoMo (${new Intl.NumberFormat('vi-VN').format(amount)}đ).`,
+        type: 'payment',
+        link: '#/bookings',
+      })
+      broadcastPaymentReceived({ bookingCode: attempt.booking_code, orderId, amount })
+      const updatedBooking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(booking.id)
+      if (updatedBooking) broadcastBookingUpdated(updatedBooking)
+    } catch {}
   } catch (err) {
     try { db.exec('ROLLBACK') } catch { /* không có transaction để hoàn tác */ }
     console.error('[momo-ipn] event=ipn_paid_error lỗi khi ghi nhận thanh toán:', err.message, 'ip=', req.ip)
@@ -313,4 +344,501 @@ paymentRouter.post('/query', requireAuth, rateLimitMiddleware('pay-query', { win
     live: MOMO_LIVE_ENABLED,
     history,
   })
+})
+
+/* ========================================================================== */
+/*                      SEPAY VIETQR PAYMENT & WEBHOOK                        */
+/* ========================================================================== */
+
+/**
+ * Hàm xác nhận thanh toán SePay tập trung (dùng cho cả Webhook thật và Simulate Test).
+ * Thực hiện trong một SQLite transaction:
+ * 1. Đổi bookings.payment_status = 'paid', bookings.status = 'Đã thanh toán'.
+ * 2. Lưu payment_attempts và payment_transactions.
+ * 3. Bắn WebSocket realtime: booking:updated, payment:received, notification:new.
+ */
+export async function confirmSepayPayment({
+  bookingCode,
+  transferAmount,
+  referenceCode,
+  gateway,
+  source = 'sepay_webhook',
+  ip = '127.0.0.1',
+  actorId = null,
+}) {
+  const code = String(bookingCode || '').trim().toUpperCase()
+  if (!code) return { ok: false, reason: 'missing_booking_code' }
+
+  const booking = db.prepare('SELECT * FROM bookings WHERE code = ? COLLATE NOCASE').get(code)
+  if (!booking) {
+    console.warn('[sepay] Không tìm thấy đơn hàng cho mã:', code)
+    return { ok: false, reason: 'booking_not_found', code }
+  }
+
+  const amount = Number(transferAmount) || 0
+  const total = Number(booking.total) || 0
+
+  // 1. Idempotency: nếu đơn đã paid thì không ghi trùng
+  if (booking.payment_status === 'paid') {
+    console.log('[sepay] Đơn đã thanh toán trước đó:', code)
+    return { ok: true, duplicate: true, code, message: 'Đơn hàng đã được thanh toán trước đó.' }
+  }
+
+  // 2. Không cho phép đổi trạng thái nếu đơn đã hủy
+  if (booking.status === 'Đã hủy') {
+    console.warn('[sepay] Đơn đã bị hủy, không thể cộng tiền:', code)
+    return { ok: false, reason: 'booking_cancelled', code }
+  }
+
+  // 3. Kiểm tra số tiền chuyển
+  if (amount > 0 && amount < total) {
+    console.warn(`[sepay] Số tiền chuyển ${amount} nhỏ hơn tổng đơn ${total} cho đơn ${code}`)
+    recordPaymentTransaction({
+      orderId: `SPY_${code}_${Date.now()}`,
+      bookingCode: code,
+      status: 'amount_mismatch',
+      amount,
+      transId: String(referenceCode || ''),
+      resultCode: 'AMOUNT_MISMATCH',
+      source,
+    })
+    return { ok: false, reason: 'amount_mismatch', code, amount, total }
+  }
+
+  const orderId = `SPY_${code}_${Date.now()}`
+  const finalAmount = amount > 0 ? amount : total
+
+  try {
+    db.exec('BEGIN')
+    db.prepare(`UPDATE bookings SET payment_status = 'paid', status = 'Đã thanh toán',
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`).run(booking.id)
+
+    db.prepare(`INSERT INTO payment_attempts
+        (booking_code, user_id, provider, order_id, request_id, amount, status, trans_id, env)
+        VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(code, booking.user_id, 'sepay', orderId, String(referenceCode || orderId), finalAmount, 'paid', String(referenceCode || ''), 'production')
+
+    recordPaymentTransaction({
+      orderId,
+      bookingCode: code,
+      status: 'paid',
+      amount: finalAmount,
+      transId: String(referenceCode || ''),
+      resultCode: '0',
+      source,
+    })
+
+    writeAuditLog({
+      actorId: actorId || booking.user_id,
+      actorEmail: booking.traveler_email || booking.email || '',
+      action: 'payment.sepay.paid',
+      entityType: 'booking',
+      entityId: code,
+      detail: `gateway=${gateway || 'SePay'} ref=${referenceCode || ''} amount=${finalAmount}`,
+      ip,
+    })
+    db.exec('COMMIT')
+
+    // Tích điểm thưởng Loyalty 1% & cập nhật hạng thành viên
+    try {
+      const loyaltyRes = addLoyaltyForBooking(booking.user_id, finalAmount)
+      if (loyaltyRes?.tierUpgraded) {
+        pushNotification(booking.user_id, {
+          title: 'Chúc mừng thăng hạng thành viên!',
+          message: `Bạn vừa được nâng hạng lên hội viên ${loyaltyRes.newTier} với tổng tích lũy ${new Intl.NumberFormat('vi-VN').format(loyaltyRes.newTotalSpent)}đ.`,
+          type: 'loyalty',
+          link: '#/profile',
+        })
+      }
+    } catch (loyaltyErr) {
+      console.warn('[loyalty] Lỗi tích điểm sepay:', loyaltyErr.message)
+    }
+
+    // Gửi thông báo Real-Time qua WebSocket và chuông thông báo
+    try {
+      pushNotification(booking.user_id, {
+        title: 'Thanh toán SePay VietQR thành công',
+        message: `Đơn ${code} đã được thanh toán thành công qua SePay VietQR (${new Intl.NumberFormat('vi-VN').format(finalAmount)}đ). Hệ thống đã tự động cộng tiền và xuất vé điện tử.`,
+        type: 'payment',
+        link: '#/bookings',
+      })
+      broadcastPaymentReceived({
+        bookingCode: code,
+        orderId,
+        amount: finalAmount,
+        provider: 'sepay',
+        gateway: gateway || 'SePay',
+      })
+      const updatedBooking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(booking.id)
+      if (updatedBooking) broadcastBookingUpdated(updatedBooking)
+    } catch (realtimeErr) {
+      console.error('[sepay] Lỗi realtime broadcast:', realtimeErr?.message)
+    }
+
+    console.log(`[sepay] Đã xác nhận thanh toán thành công đơn ${code}, số tiền ${finalAmount}đ`)
+    return { ok: true, code, amount: finalAmount, orderId, total: finalAmount }
+  } catch (err) {
+    try { db.exec('ROLLBACK') } catch {}
+    console.error('[sepay] Lỗi ghi nhận thanh toán vào DB:', err?.message)
+    return { ok: false, error: err?.message }
+  }
+}
+
+/**
+ * Xử lý webhook từ SePay (server-to-server).
+ * Đón payload JSON/Form từ https://my.sepay.vn.
+ */
+export async function handleSepayWebhook(req, res) {
+  try {
+    const body = req.body || {}
+    console.log('[sepay-webhook] Nhận webhook từ SePay:', JSON.stringify(body))
+
+    // Optional API key validation
+    if (SEPAY_CONFIG.apiKey) {
+      const authHeader = req.headers.authorization || ''
+      const token = req.headers['x-sepay-token'] || req.query?.token || ''
+      const keyValid = authHeader === `Apikey ${SEPAY_CONFIG.apiKey}` || token === SEPAY_CONFIG.apiKey
+      if (!keyValid) {
+        console.warn('[sepay-webhook] API Key không hợp lệ:', authHeader, 'ip=', req.ip)
+        return res.status(401).json({ error: 'Unauthorized SePay Webhook' })
+      }
+    }
+
+    // Kiểm tra transferType nếu có: chỉ nhận giao dịch tiền vào ('in')
+    if (body.transferType && String(body.transferType).toLowerCase() !== 'in') {
+      console.log('[sepay-webhook] Bỏ qua giao dịch không phải tiền vào (transferType !== "in"):', body.transferType)
+      return res.status(200).json({ ok: true, ignored: true, reason: 'not_incoming' })
+    }
+
+    // Phân tích nội dung chuyển khoản để nhận diện NẠP TIỀN VÍ hoặc THANH TOÁN ĐƠN
+    const rawContent = `${body.content || ''} ${body.description || ''} ${body.code || ''}`
+    const transferAmount = Number(body.transferAmount || body.amount || 0)
+    const referenceCode = body.referenceCode || body.id || body.code || `SPY_${Date.now()}`
+    const gateway = body.gateway || body.bank || SEPAY_CONFIG.bank
+
+    // 1. Trường hợp NẠP TIỀN VÀO VÍ: cú pháp NAP<userId> hoặc NAPTIEN <userId>
+    const depositMatch = rawContent.match(/(?:MAYAN)?NAP\s*(\d+)/i) || rawContent.match(/NAPTIEN\s*(\d+)/i) || rawContent.match(/VI\s*(\d+)/i)
+    if (depositMatch) {
+      const userId = Number(depositMatch[1])
+      console.log(`[sepay-webhook] Nhận diện giao dịch nạp tiền ví cho userId=${userId}, số tiền=${transferAmount}`)
+      try {
+        const depositResult = depositUserWallet({
+          userId,
+          amount: transferAmount,
+          referenceCode,
+          description: `Nạp tiền qua SePay VietQR (${gateway})`,
+          source: 'sepay_webhook',
+        })
+
+        if (!depositResult.duplicate) {
+          pushNotification(userId, {
+            title: 'Nạp tiền vào ví thành công',
+            message: `Bạn vừa được cộng ${new Intl.NumberFormat('vi-VN').format(transferAmount)}đ vào số dư ví Mây An Nhiên qua SePay VietQR (${gateway}). Số dư hiện tại: ${new Intl.NumberFormat('vi-VN').format(depositResult.balance)}đ.`,
+            type: 'payment',
+            link: '#/profile',
+          })
+          realtimeBus.publish('user:balance:updated', { userId, balance: depositResult.balance, added: transferAmount }, 'all')
+          realtimeBus.publish('user:balance:updated', { userId, balance: depositResult.balance, added: transferAmount }, `user:${userId}`)
+        }
+
+        return res.status(200).json({
+          success: true,
+          type: 'deposit',
+          message: 'Nạp tiền vào ví thành công',
+          userId,
+          amount: transferAmount,
+          balance: depositResult.balance,
+          duplicate: depositResult.duplicate || false,
+        })
+      } catch (depErr) {
+        console.error('[sepay-webhook] Lỗi nạp tiền ví:', depErr.message)
+        return res.status(200).json({ ok: true, ignored: true, error: depErr.message })
+      }
+    }
+
+    // 2. Trường hợp THANH TOÁN ĐƠN HÀNG: cú pháp MAN<bookingCode>
+    const bookingMatch = rawContent.match(/MAN\d{5,10}/i) || rawContent.match(/MAN\d+/i)
+    if (bookingMatch) {
+      const bookingCode = bookingMatch[0].toUpperCase()
+      const result = await confirmSepayPayment({
+        bookingCode,
+        transferAmount,
+        referenceCode,
+        gateway,
+        source: 'sepay_webhook',
+        ip: req.ip,
+      })
+
+      if (!result.ok) {
+        console.warn('[sepay-webhook] Xử lý đơn hàng không thành công:', result.reason)
+        return res.status(200).json({ ok: true, ignored: true, ...result })
+      }
+
+      return res.status(200).json({ success: true, type: 'payment', message: 'Đã xác nhận thanh toán đơn hàng thành công', ...result })
+    }
+
+    console.warn('[sepay-webhook] Không tìm thấy mã đơn hàng MAN... hoặc mã nạp tiền NAP... trong nội dung:', rawContent)
+    return res.status(200).json({ ok: true, ignored: true, reason: 'unknown_syntax' })
+  } catch (err) {
+    console.error('[sepay-webhook] Lỗi ngoài dự kiến:', err?.message)
+    return res.status(200).json({ ok: true, error: err?.message })
+  }
+}
+
+/** Router webhook SePay miễn kiểm tra CSRF (server-to-server) */
+export const sepayWebhookRouter = Router()
+sepayWebhookRouter.post(
+  ['/', '/sepay', '/sepay/webhook', '/webhook'],
+  express.json({ limit: '64kb' }),
+  express.urlencoded({ limit: '64kb', extended: false }),
+  handleSepayWebhook
+)
+
+/* Các endpoint hỗ trợ UI SePay trên paymentRouter (/api/payment) */
+
+// Lấy thông tin tài khoản ngân hàng & QR SePay
+paymentRouter.get('/sepay/config', (_req, res) => {
+  res.json({
+    ok: true,
+    bank: SEPAY_CONFIG.bank,
+    accNumber: SEPAY_CONFIG.accNumber,
+    accName: SEPAY_CONFIG.accName,
+    gatewayUrl: SEPAY_CONFIG.gatewayUrl,
+  })
+})
+
+// Lấy thông tin thanh toán & VietQR động theo mã đơn
+paymentRouter.get('/sepay/info/:code', (req, res) => {
+  const code = String(req.params.code || '').trim().toUpperCase()
+  const booking = db.prepare('SELECT * FROM bookings WHERE code = ? COLLATE NOCASE').get(code)
+  if (!booking) return bad(res, 'Không tìm thấy đơn hàng.', 404)
+
+  const amount = Number(booking.total) || 0
+  const qrUrl = `https://qr.sepay.vn/img?acc=${encodeURIComponent(SEPAY_CONFIG.accNumber)}&bank=${encodeURIComponent(SEPAY_CONFIG.bank)}&amount=${amount}&des=${encodeURIComponent(booking.code)}&template=compact`
+
+  res.json({
+    ok: true,
+    bookingCode: booking.code,
+    title: booking.title,
+    amount,
+    bank: SEPAY_CONFIG.bank,
+    accountNumber: SEPAY_CONFIG.accNumber,
+    accountName: SEPAY_CONFIG.accName,
+    content: booking.code,
+    qrUrl,
+    directUrl: SEPAY_CONFIG.gatewayUrl,
+    status: booking.status,
+    paymentStatus: booking.payment_status,
+    paid: booking.payment_status === 'paid',
+  })
+})
+
+// Kiểm tra trạng thái thanh toán đơn (hỗ trợ polling khi mất WebSocket)
+paymentRouter.get('/sepay/status/:code', (req, res) => {
+  const code = String(req.params.code || '').trim().toUpperCase()
+  const booking = db.prepare('SELECT * FROM bookings WHERE code = ? COLLATE NOCASE').get(code)
+  if (!booking) return bad(res, 'Không tìm thấy đơn hàng.', 404)
+
+  res.json({
+    ok: true,
+    code: booking.code,
+    status: booking.status,
+    paymentStatus: booking.payment_status,
+    paid: booking.payment_status === 'paid',
+    total: booking.total,
+  })
+})
+
+// Mô phỏng thanh toán thành công (dành cho người dùng / dev test ngay trên Cốc Cốc)
+paymentRouter.post('/sepay/simulate', async (req, res) => {
+  const bookingCode = String(req.body?.bookingCode || '').trim().toUpperCase()
+  if (!bookingCode) return bad(res, 'Thiếu mã đơn hàng cần thanh toán.')
+
+  const booking = db.prepare('SELECT * FROM bookings WHERE code = ? COLLATE NOCASE').get(bookingCode)
+  if (!booking) return bad(res, 'Không tìm thấy đơn hàng.', 404)
+
+  const amount = Number(req.body?.amount) || Number(booking.total) || 0
+  const referenceCode = `SIM_${Date.now()}`
+
+  const result = await confirmSepayPayment({
+    bookingCode,
+    transferAmount: amount,
+    referenceCode,
+    gateway: 'SePay-Simulated',
+    source: 'simulate',
+    ip: req.ip,
+    actorId: req.session?.user?.id || booking.user_id,
+  })
+
+  if (!result.ok) {
+    return bad(res, result.message || `Không thể thanh toán: ${result.reason}`, 400)
+  }
+
+  res.json({
+    ok: true,
+    success: true,
+    message: 'Mô phỏng thanh toán SePay thành công!',
+    bookingCode,
+    amount,
+    status: 'Đã thanh toán',
+    paymentStatus: 'paid',
+  })
+})
+
+// Nhận webhook trực tiếp trên đường dẫn /api/payment/sepay/webhook
+paymentRouter.post(
+  '/sepay/webhook',
+  express.json({ limit: '64kb' }),
+  express.urlencoded({ limit: '64kb', extended: false }),
+  handleSepayWebhook
+)
+
+/* ========================================================================== */
+/*                      VÍ TIỀN & SỐ DƯ TÀI KHOẢN (WALLET)                     */
+/* ========================================================================== */
+
+// Lấy thông tin ví và lịch sử nạp/trừ tiền
+paymentRouter.get('/wallet', requireAuth, (req, res) => {
+  const userId = Number(req.session.user.id)
+  const wallet = getUserWallet(userId)
+  if (!wallet) return bad(res, 'Không tìm thấy thông tin ví người dùng.', 404)
+  res.json({ ok: true, ...wallet })
+})
+
+// Lấy thông tin nạp tiền & mã VietQR SePay theo số tiền mong muốn
+paymentRouter.get('/wallet/deposit/info', requireAuth, (req, res) => {
+  const userId = Number(req.session.user.id)
+  const amount = Math.max(Number(req.query?.amount) || 200000, 10000)
+  const memo = `NAP${userId}`
+  const qrUrl = `https://qr.sepay.vn/img?acc=${encodeURIComponent(SEPAY_CONFIG.accNumber)}&bank=${encodeURIComponent(SEPAY_CONFIG.bank)}&amount=${amount}&des=${encodeURIComponent(memo)}&template=compact`
+
+  res.json({
+    ok: true,
+    userId,
+    amount,
+    bank: SEPAY_CONFIG.bank,
+    accountNumber: SEPAY_CONFIG.accNumber,
+    accountName: SEPAY_CONFIG.accName,
+    content: memo,
+    qrUrl,
+    directUrl: SEPAY_CONFIG.gatewayUrl,
+  })
+})
+
+// Mô phỏng nạp tiền vào ví SePay (Test tức thì trên Web / Cốc Cốc)
+paymentRouter.post('/wallet/deposit/simulate', requireAuth, (req, res) => {
+  const userId = Number(req.session.user.id)
+  const amount = Math.max(Number(req.body?.amount) || 500000, 10000)
+  const referenceCode = `SIM_NAP_${Date.now()}`
+
+  try {
+    const result = depositUserWallet({
+      userId,
+      amount,
+      referenceCode,
+      description: 'Mô phỏng nạp tiền ví Mây An Nhiên (Test SePay)',
+      source: 'simulate',
+    })
+
+    pushNotification(userId, {
+      title: 'Nạp tiền vào ví thành công',
+      message: `Bạn vừa nạp thành công ${new Intl.NumberFormat('vi-VN').format(amount)}đ vào số dư ví Mây An Nhiên. Số dư hiện tại: ${new Intl.NumberFormat('vi-VN').format(result.balance)}đ.`,
+      type: 'payment',
+      link: '#/profile',
+    })
+    realtimeBus.publish('user:balance:updated', { userId, balance: result.balance, added: amount }, 'all')
+    realtimeBus.publish('user:balance:updated', { userId, balance: result.balance, added: amount }, `user:${userId}`)
+
+    res.json({
+      ok: true,
+      success: true,
+      message: 'Nạp tiền vào ví thành công!',
+      balance: result.balance,
+      added: amount,
+    })
+  } catch (err) {
+    return bad(res, err.message, 400)
+  }
+})
+
+// Thanh toán đơn hàng bằng số dư ví
+paymentRouter.post('/wallet/pay-booking', requireAuth, async (req, res) => {
+  const userId = Number(req.session.user.id)
+  const bookingCode = String(req.body?.bookingCode || '').trim().toUpperCase()
+  if (!bookingCode) return bad(res, 'Thiếu mã đơn hàng cần thanh toán.')
+
+  const booking = db.prepare('SELECT * FROM bookings WHERE code = ? AND user_id = ?').get(bookingCode, userId)
+  if (!booking) return bad(res, 'Không tìm thấy đơn hàng của bạn.', 404)
+  if (booking.payment_status === 'paid') return bad(res, 'Đơn hàng đã được thanh toán trước đó.', 409)
+  if (booking.status === 'Đã hủy') return bad(res, 'Đơn hàng đã bị hủy, không thể thanh toán.', 409)
+
+  const amount = Number(booking.total) || 0
+
+  try {
+    const payResult = payWithWallet({
+      userId,
+      amount,
+      bookingCode: booking.code,
+      description: `Thanh toán đơn ${booking.code} bằng số dư ví`,
+    })
+
+    const orderId = `WAL_${booking.code}_${Date.now()}`
+
+    db.exec('BEGIN')
+    db.prepare(`UPDATE bookings SET payment_status = 'paid', status = 'Đã thanh toán', payment_method = 'Số dư ví Mây An Nhiên',
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`).run(booking.id)
+
+    db.prepare(`INSERT INTO payment_attempts
+        (booking_code, user_id, provider, order_id, request_id, amount, status, trans_id, env)
+        VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(booking.code, userId, 'wallet_balance', orderId, orderId, amount, 'paid', String(payResult.transactionId), 'production')
+
+    recordPaymentTransaction({
+      orderId,
+      bookingCode: booking.code,
+      status: 'paid',
+      amount,
+      transId: String(payResult.transactionId),
+      resultCode: '0',
+      source: 'wallet_balance',
+    })
+    db.exec('COMMIT')
+
+    try {
+      const loyaltyRes = addLoyaltyForBooking(userId, amount)
+      if (loyaltyRes?.tierUpgraded) {
+        pushNotification(userId, {
+          title: 'Chúc mừng thăng hạng thành viên!',
+          message: `Bạn vừa được nâng hạng lên hội viên ${loyaltyRes.newTier} với tổng tích lũy ${new Intl.NumberFormat('vi-VN').format(loyaltyRes.newTotalSpent)}đ.`,
+          type: 'loyalty',
+          link: '#/profile',
+        })
+      }
+    } catch (loyaltyErr) {
+      console.warn('[loyalty] Lỗi tích điểm ví:', loyaltyErr.message)
+    }
+
+    pushNotification(userId, {
+      title: 'Thanh toán đơn hàng thành công',
+      message: `Đơn ${booking.code} đã được thanh toán thành công bằng số dư ví Mây An Nhiên (-${new Intl.NumberFormat('vi-VN').format(amount)}đ). Số dư còn lại: ${new Intl.NumberFormat('vi-VN').format(payResult.balance)}đ.`,
+      type: 'payment',
+      link: '#/bookings',
+    })
+    realtimeBus.publish('user:balance:updated', { userId, balance: payResult.balance, deducted: amount }, 'all')
+    realtimeBus.publish('user:balance:updated', { userId, balance: payResult.balance, deducted: amount }, `user:${userId}`)
+    broadcastPaymentReceived({ bookingCode: booking.code, orderId, amount, provider: 'wallet_balance' })
+    const updated = db.prepare('SELECT * FROM bookings WHERE id = ?').get(booking.id)
+    if (updated) broadcastBookingUpdated(updated)
+
+    res.json({
+      ok: true,
+      success: true,
+      message: 'Thanh toán đơn hàng bằng số dư ví thành công!',
+      balance: payResult.balance,
+      bookingCode: booking.code,
+      amount,
+    })
+  } catch (err) {
+    return bad(res, err.message, 400)
+  }
 })

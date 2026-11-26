@@ -1,6 +1,23 @@
 // src/components/FlightBookingMomo.jsx — Mô hình đặt vé máy bay giống MoMo (tìm chặng, thanh giá theo ngày, bộ lọc hãng, chi tiết chuyến & chọn ghế).
 import { useMemo, useState } from 'react'
 import {
+  Armchair,
+  ArrowLeftRight,
+  ArrowRight,
+  Briefcase,
+  Calendar,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Plane,
+  PlaneLanding,
+  PlaneTakeoff,
+  RotateCcw,
+  Users,
+  X,
+  Zap,
+} from 'lucide-react'
+import {
   AIRPORTS,
   BAGGAGE_OPTIONS,
   FLIGHT_SEAT_COLS,
@@ -115,8 +132,12 @@ export function FlightBookingMomo({
     if (!pickingFlight) return
     const chosenClass = SEAT_CLASSES.find((c) => c.id === seatClassId) || SEAT_CLASSES[0]
     const chosenBag = BAGGAGE_OPTIONS.find((b) => b.id === baggageId) || BAGGAGE_OPTIONS[0]
+    const unitAddon = (chosenClass.addon || 0) + (chosenBag.price || 0)
     onChoose({
       ...pickingFlight,
+      price: (pickingFlight.price || 0) + unitAddon,
+      seatCode: selectedSeat,
+      selectedSeat,
       selectedMeta: {
         seat: selectedSeat,
         seatClass: chosenClass.label,
@@ -153,7 +174,11 @@ export function FlightBookingMomo({
                 className={`momo-pill-btn ${tripType === mode ? 'active' : ''}`}
                 onClick={() => setTripType(mode)}
               >
-                {mode === 'Khứ hồi' ? '⇄ Khứ hồi' : '→ Một chiều'}
+                {mode === 'Khứ hồi' ? (
+                  <><ArrowLeftRight size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Khứ hồi</>
+                ) : (
+                  <><ArrowRight size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Một chiều</>
+                )}
               </button>
             ))}
           </div>
@@ -165,7 +190,7 @@ export function FlightBookingMomo({
                 className={`momo-pill-btn subtle ${cabinFilter === cls ? 'active' : ''}`}
                 onClick={() => setCabinFilter(cls)}
               >
-                💺 {cls}
+                <Armchair size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> {cls}
               </button>
             ))}
           </div>
@@ -173,7 +198,7 @@ export function FlightBookingMomo({
 
         <div className="momo-route-grid">
           <label className="momo-field">
-            <span>🛫 Điểm đi</span>
+            <span><PlaneTakeoff size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Điểm đi</span>
             <select value={fromCity} onChange={(e) => setFromCity(e.target.value)}>
               <option value="Tất cả">Tất cả sân bay đi</option>
               {AIRPORTS.map((a) => (
@@ -189,11 +214,11 @@ export function FlightBookingMomo({
             title="Đổi chiều điểm đi / điểm đến"
             aria-label="Đổi chiều điểm đi và điểm đến"
           >
-            ⇄
+            <ArrowLeftRight size={16} strokeWidth={1.8} />
           </button>
 
           <label className="momo-field">
-            <span>🛬 Điểm đến</span>
+            <span><PlaneLanding size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Điểm đến</span>
             <select value={toCity} onChange={(e) => setToCity(e.target.value)}>
               <option value="Tất cả">Tất cả sân bay đến</option>
               {AIRPORTS.map((a) => (
@@ -203,7 +228,7 @@ export function FlightBookingMomo({
           </label>
 
           <label className="momo-field">
-            <span>📅 Ngày đi</span>
+            <span><Calendar size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Ngày đi</span>
             <input
               type="date"
               value={dates.depart}
@@ -213,7 +238,7 @@ export function FlightBookingMomo({
           </label>
 
           <label className={`momo-field ${tripType === 'Một chiều' ? 'is-disabled' : ''}`}>
-            <span>📅 Ngày về</span>
+            <span><Calendar size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Ngày về</span>
             <input
               type="date"
               value={dates.ret}
@@ -224,7 +249,7 @@ export function FlightBookingMomo({
           </label>
 
           <label className="momo-field">
-            <span>👥 Hành khách</span>
+            <span><Users size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Hành khách</span>
             <select value={passengers} onChange={(e) => setPassengers(Number(e.target.value))}>
               {[1, 2, 3, 4, 5, 6].map((n) => (
                 <option key={n} value={n}>{n} hành khách</option>
@@ -320,7 +345,7 @@ export function FlightBookingMomo({
               className="reset-filter-btn"
               onClick={() => { setFromCity('Tất cả'); setToCity('Tất cả'); setAirlineFilter('Tất cả') }}
             >
-              ↺ Đặt lại chặng bay
+              <RotateCcw size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Đặt lại chặng bay
             </button>
           )}
         </aside>
@@ -347,7 +372,9 @@ export function FlightBookingMomo({
                         <div className="flight-top">
                           <div>
                             <h3>{flight.airline}</h3>
-                            <small className="flight-code">{flight.id} · Airbus A321 · 🧳 7kg xách tay</small>
+                            <small className="flight-code">
+                              {flight.id} · Airbus A321 · <Briefcase size={13} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 3 }} /> 7kg xách tay
+                            </small>
                           </div>
                           <span>{flight.tag}</span>
                         </div>
@@ -358,7 +385,9 @@ export function FlightBookingMomo({
                           </div>
                           <div className="route-line momo-route-line">
                             <span>{flight.duration}</span>
-                            <em className="route-plane" aria-hidden="true">✈</em>
+                            <em className="route-plane" aria-hidden="true">
+                              <Plane size={14} strokeWidth={1.8} />
+                            </em>
                           </div>
                           <div>
                             <b>{flight.arrive}</b>
@@ -371,9 +400,17 @@ export function FlightBookingMomo({
                             className="momo-detail-toggle"
                             onClick={() => setExpandedId(isExpanded ? null : flight.id)}
                           >
-                            {isExpanded ? '▲ Thu gọn chi tiết' : '▼ Chi tiết chuyến bay & hành lý'}
+                            {isExpanded ? (
+                              <><ChevronUp size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 3 }} /> Thu gọn chi tiết</>
+                            ) : (
+                              <><ChevronDown size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 3 }} /> Chi tiết chuyến bay & hành lý</>
+                            )}
                           </button>
-                          {flight.hasPromo && <span className="momo-promo-tag">🔥 Áp dụng mã BAYNGAY (-8%)</span>}
+                          {flight.hasPromo && (
+                            <span className="momo-promo-tag">
+                              <Zap size={13} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Áp dụng mã BAYNGAY (-8%)
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="price-box">
@@ -386,15 +423,15 @@ export function FlightBookingMomo({
                     {isExpanded && (
                       <div className="momo-flight-details">
                         <div>
-                          <b>🛫 Lịch trình chi tiết ({formatDateVN(dates.depart)})</b>
+                          <b><PlaneTakeoff size={15} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Lịch trình chi tiết ({formatDateVN(dates.depart)})</b>
                           <p>{flight.depart} · Khởi hành tại {flight.from} ({airportCodeOf(flight.from)})</p>
                           <p>{flight.arrive} · Hạ cánh tại {flight.to} ({airportCodeOf(flight.to)}) · Bay thẳng {flight.duration}</p>
                         </div>
                         <div>
-                          <b>🧳 Quy định hành lý & Vé</b>
-                          <p>✓ 07 kg hành lý xách tay miễn phí</p>
-                          <p>✓ Chọn chỗ ngồi trực tuyến ngay bước tiếp theo</p>
-                          <p>✓ Xuất vé điện tử tức thì qua Email & Đặt chỗ của tôi</p>
+                          <b><Briefcase size={15} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Quy định hành lý & Vé</b>
+                          <p><Check size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> 07 kg hành lý xách tay miễn phí</p>
+                          <p><Check size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Chọn chỗ ngồi trực tuyến ngay bước tiếp theo</p>
+                          <p><Check size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Xuất vé điện tử tức thì qua Email & Đặt chỗ của tôi</p>
                         </div>
                       </div>
                     )}
@@ -415,13 +452,15 @@ export function FlightBookingMomo({
       {pickingFlight && (
         <div className="login-overlay" onClick={() => setPickingFlight(null)} role="presentation">
           <div className="momo-seat-modal" role="dialog" aria-modal="true" aria-label="Chọn hạng vé và ghế ngồi" onClick={(e) => e.stopPropagation()}>
-            <button type="button" className="login-close" onClick={() => setPickingFlight(null)} aria-label="Đóng">✕</button>
+            <button type="button" className="login-close" onClick={() => setPickingFlight(null)} aria-label="Đóng">
+              <X size={18} strokeWidth={1.8} />
+            </button>
             <div className="momo-modal-head">
               <span className="airline-logo">{pickingFlight.logo}</span>
               <div>
                 <h3>{pickingFlight.airline} · {pickingFlight.id}</h3>
                 <p>
-                  {pickingFlight.from} ({airportCodeOf(pickingFlight.from)}) → {pickingFlight.to} ({airportCodeOf(pickingFlight.to)})
+                  {pickingFlight.from} ({airportCodeOf(pickingFlight.from)}) <ArrowRight size={14} strokeWidth={1.8} style={{ verticalAlign: 'middle' }} /> {pickingFlight.to} ({airportCodeOf(pickingFlight.to)})
                   {' · '}Ngày {formatDateVN(dates.depart)} · {pickingFlight.depart} - {pickingFlight.arrive}
                 </p>
               </div>
@@ -506,7 +545,7 @@ export function FlightBookingMomo({
                 )}
               </div>
               <button type="button" className="pay-btn" onClick={confirmFlightPick}>
-                Tiếp tục thanh toán →
+                Tiếp tục thanh toán <ArrowRight size={15} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginLeft: 4 }} />
               </button>
             </div>
           </div>
@@ -515,3 +554,6 @@ export function FlightBookingMomo({
     </section>
   )
 }
+
+export default FlightBookingMomo
+

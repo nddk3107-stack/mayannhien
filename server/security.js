@@ -16,7 +16,7 @@ const CSP_DIRECTIVES = [
   // CSS inline trong <style> của React + style attributes -> cần 'unsafe-inline' cho style.
   "style-src 'self' 'unsafe-inline'",
   // Ảnh từ CDN bên ngoài (ảnh khách sạn/đại lý) và data: avatar.
-  "img-src 'self' data: https:",
+  "img-src 'self' data: https: blob:",
   "font-src 'self' data:",
   // Kết nối tới API cùng origin; nếu tách domain thì thêm vào connect-src.
   "connect-src 'self'",

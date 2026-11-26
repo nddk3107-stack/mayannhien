@@ -1,12 +1,15 @@
 // server/routes-admin.js — Toàn bộ API quản trị. Mọi route đều bắt buộc đăng nhập + role admin.
 import { Router } from 'express'
 import { randomBytes } from 'node:crypto'
+import ExcelJS from 'exceljs'
 import {
   db, listFlights, listHotels, listPromotions, hotelOut, flightOut, promoOut, comboOut,
   roomOut,
-  deleteSessionsOfUser, writeAuditLog, listAuditLog, listPaymentAttempts, listPaymentTransactions,
+  deleteSessionsOfUser, writeAuditLog, listAuditLog, listAuditLogsFiltered, listPaymentAttempts, listPaymentTransactions,
+  listExtraServices, getExtraService, createExtraService, updateExtraService, deleteExtraService,
 } from './db.js'
 import { requireAdmin } from './auth.js'
+import { broadcastBookingUpdated, broadcastCatalogUpdated, pushNotification } from './realtime.js'
 
 export const adminRouter = Router()
 adminRouter.use(requireAdmin)
@@ -46,7 +49,7 @@ adminRouter.get('/stats', (req, res) => {
   // Doanh thu CHỈ tính đơn server đã định giá đáng tin (legacy = 0).
   // Đơn nhập từ bản cũ không có dữ liệu giá -> loại khỏi doanh thu, tránh số bịa.
   const revenueRow = db.prepare(`SELECT COALESCE(SUM(total),0) AS s FROM bookings
-                                 WHERE status IN ('Đã thanh toán','Đã xác nhận') AND legacy = 0`).get()
+                                 WHERE status IN ('Đã thanh toán','Đã xác nhận','checked_in','Đã check-in') AND legacy = 0`).get()
   const legacyBookings = db.prepare('SELECT COUNT(*) AS c FROM bookings WHERE legacy = 1').get().c
   // Doanh thu THẬT (P1-01): KHÔNG tin cột payment_status một cách mù quáng.
   // Một đơn chỉ được tính khi: payment_status='paid' AND có bằng chứng giao dịch
@@ -258,7 +261,17 @@ adminRouter.patch('/bookings/:id', (req, res) => {
 
   const updated = db.prepare(`SELECT b.*, u.email AS owner_email FROM bookings b
                               JOIN users u ON u.id = b.user_id WHERE b.id = ?`).get(row.id)
-  ok(res, bookingOut(updated))
+  const result = bookingOut(updated)
+  broadcastBookingUpdated(result)
+  try {
+    pushNotification(row.user_id, {
+      title: 'Cập nhật trạng thái đơn hàng',
+      message: `Đơn ${row.code} đã chuyển sang trạng thái "${nextStatus || row.status}".`,
+      type: 'booking',
+      link: '#/bookings',
+    })
+  } catch { }
+  ok(res, result)
 })
 
 /* ----------------------------------------------------------------- hotels */
@@ -266,10 +279,12 @@ adminRouter.get('/hotels', (req, res) => ok(res, listHotels(true)))
 
 function hotelPayload(b, cur) {
   const src = cur
-    ? { name: b.name ?? cur.name, location: b.location ?? cur.location, rating: b.rating ?? cur.rating,
-        stars: b.stars ?? cur.stars, price: b.price ?? cur.price, hasPromo: b.hasPromo ?? !!cur.has_promo,
-        image: b.image ?? cur.image, perks: b.perks ?? JSON.parse(cur.perks || '[]'),
-        description: b.description ?? cur.description, isActive: b.isActive ?? !!cur.is_active }
+    ? {
+      name: b.name ?? cur.name, location: b.location ?? cur.location, rating: b.rating ?? cur.rating,
+      stars: b.stars ?? cur.stars, price: b.price ?? cur.price, hasPromo: b.hasPromo ?? !!cur.has_promo,
+      image: b.image ?? cur.image, perks: b.perks ?? JSON.parse(cur.perks || '[]'),
+      description: b.description ?? cur.description, isActive: b.isActive ?? !!cur.is_active
+    }
     : b
   const out = {
     name: txt(src.name, 120), location: txt(src.location, 120),
@@ -366,17 +381,17 @@ function roomPayload(b, cur) {
   const curCamel = cur ? roomOut(cur) : null
   const src = cur
     ? {
-        name: b.name ?? curCamel.name, hotelId: b.hotelId ?? curCamel.hotelId,
-        price: b.price ?? curCamel.price, bedType: b.bedType ?? curCamel.bedType,
-        sizeSqm: b.sizeSqm ?? curCamel.sizeSqm, maxAdults: b.maxAdults ?? curCamel.maxAdults,
-        maxChildren: b.maxChildren ?? curCamel.maxChildren,
-        amenities: b.amenities ?? curCamel.amenities, images: b.images ?? curCamel.images,
-        breakfast: b.breakfast ?? curCamel.breakfast,
-        freeCancellation: b.freeCancellation ?? curCamel.freeCancellation,
-        checkinTime: b.checkinTime ?? curCamel.checkinTime,
-        checkoutTime: b.checkoutTime ?? curCamel.checkoutTime,
-        isActive: b.isActive ?? curCamel.isActive,
-      }
+      name: b.name ?? curCamel.name, hotelId: b.hotelId ?? curCamel.hotelId,
+      price: b.price ?? curCamel.price, bedType: b.bedType ?? curCamel.bedType,
+      sizeSqm: b.sizeSqm ?? curCamel.sizeSqm, maxAdults: b.maxAdults ?? curCamel.maxAdults,
+      maxChildren: b.maxChildren ?? curCamel.maxChildren,
+      amenities: b.amenities ?? curCamel.amenities, images: b.images ?? curCamel.images,
+      breakfast: b.breakfast ?? curCamel.breakfast,
+      freeCancellation: b.freeCancellation ?? curCamel.freeCancellation,
+      checkinTime: b.checkinTime ?? curCamel.checkinTime,
+      checkoutTime: b.checkoutTime ?? curCamel.checkoutTime,
+      isActive: b.isActive ?? curCamel.isActive,
+    }
     : b
 
   const name = txt(src.name, 120)
@@ -435,8 +450,10 @@ function roomPayload(b, cur) {
 
   // room ID KHÔNG được gửi trong body thay đổi — route param mới là nguồn thật.
   return {
-    value: { name, hotelId, price, bedType, sizeSqm, maxAdults, maxChildren,
-      amenities, images, breakfast, freeCancellation, checkinTime, checkoutTime, isActive },
+    value: {
+      name, hotelId, price, bedType, sizeSqm, maxAdults, maxChildren,
+      amenities, images, breakfast, freeCancellation, checkinTime, checkoutTime, isActive
+    },
   }
 }
 
@@ -518,10 +535,12 @@ adminRouter.get('/flights', (req, res) => ok(res, listFlights(true)))
 
 function flightPayload(b, cur) {
   const src = cur
-    ? { airline: b.airline ?? cur.airline, logo: b.logo ?? cur.logo, from: b.from ?? cur.origin,
-        to: b.to ?? cur.dest, depart: b.depart ?? cur.depart, arrive: b.arrive ?? cur.arrive,
-        duration: b.duration ?? cur.duration, price: b.price ?? cur.price, tag: b.tag ?? cur.tag,
-        hasPromo: b.hasPromo ?? !!cur.has_promo, isActive: b.isActive ?? !!cur.is_active }
+    ? {
+      airline: b.airline ?? cur.airline, logo: b.logo ?? cur.logo, from: b.from ?? cur.origin,
+      to: b.to ?? cur.dest, depart: b.depart ?? cur.depart, arrive: b.arrive ?? cur.arrive,
+      duration: b.duration ?? cur.duration, price: b.price ?? cur.price, tag: b.tag ?? cur.tag,
+      hasPromo: b.hasPromo ?? !!cur.has_promo, isActive: b.isActive ?? !!cur.is_active
+    }
     : b
   const out = {
     airline: txt(src.airline, 60), logo: txt(src.logo ?? '', 6, 0) ?? '',
@@ -738,6 +757,229 @@ adminRouter.get('/audit-log', (req, res) => {
   ok(res, listAuditLog(limit))
 })
 
+// Màn hình truy vết nhật ký hoạt động (Audit Log Viewer) có phân trang & lọc nâng cao
+adminRouter.get('/audit-logs', (req, res) => {
+  const page = Math.max(Number(req.query.page) || 1, 1)
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100)
+  const action = txt(req.query.action, 100, 0)
+  const actor = txt(req.query.actor, 100, 0)
+  const fromDate = txt(req.query.from_date, 20, 0)
+  const toDate = txt(req.query.to_date, 20, 0)
+  const result = listAuditLogsFiltered({ page, limit, action, actor, fromDate, toDate })
+  ok(res, result)
+})
+
+// Xuất báo cáo doanh thu ra file Excel (.xlsx) với 2 sheet chi tiết & trực quan
+adminRouter.get('/reports/revenue/export', async (req, res) => {
+  try {
+    const fromDate = txt(req.query.from_date, 20, 0)
+    const toDate = txt(req.query.to_date, 20, 0)
+    const serviceType = txt(req.query.service_type, 30, 0)
+
+    const where = ["b.status <> 'Đã hủy'"]
+    const args = []
+    if (fromDate) { where.push("substr(b.created_at, 1, 10) >= ?"); args.push(fromDate) }
+    if (toDate) { where.push("substr(b.created_at, 1, 10) <= ?"); args.push(toDate) }
+    if (serviceType && serviceType !== 'all') { where.push("b.service_type = ?"); args.push(serviceType) }
+    const whereSql = `WHERE ${where.join(' AND ')}`
+
+    const rows = db.prepare(`
+      SELECT b.*, u.email AS owner_email
+      FROM bookings b
+      JOIN users u ON u.id = b.user_id
+      ${whereSql}
+      ORDER BY b.id DESC
+    `).all(...args)
+
+    const SERVICE_LABELS = {
+      flight: 'Vé máy bay',
+      hotel: 'Khách sạn',
+      combo: 'Combo du lịch',
+      activity: 'Vui chơi & Trải nghiệm',
+      car: 'Đưa đón sân bay',
+      bus: 'Xe khách',
+      train: 'Tàu hỏa',
+      insurance: 'Bảo hiểm du lịch',
+    }
+
+    const totalRevenue = rows.reduce((acc, r) => acc + (r.legacy === 0 ? Number(r.total || 0) : 0), 0)
+    const paidRevenue = rows.filter((r) => r.payment_status === 'paid').reduce((acc, r) => acc + Number(r.total || 0), 0)
+    const confirmedCount = rows.filter((r) => r.status === 'Đã xác nhận' || r.status === 'Đã thanh toán').length
+
+    const serviceStats = {}
+    for (const r of rows) {
+      const type = r.service_type || 'other'
+      if (!serviceStats[type]) serviceStats[type] = { count: 0, revenue: 0 }
+      serviceStats[type].count += 1
+      if (r.legacy === 0) serviceStats[type].revenue += Number(r.total || 0)
+    }
+
+    const workbook = new ExcelJS.Workbook()
+    workbook.creator = 'Mây An Nhiên System'
+    workbook.created = new Date()
+
+    // ===== SHEET 1: TỔNG QUAN =====
+    const sheetOverview = workbook.addWorksheet('Tổng quan doanh thu', {
+      views: [{ showGridLines: true }],
+    })
+
+    // Tiêu đề
+    sheetOverview.mergeCells('A1:E1')
+    const titleCell = sheetOverview.getCell('A1')
+    titleCell.value = 'BÁO CÁO TỔNG QUAN DOANH THU & GIAO DỊCH'
+    titleCell.font = { name: 'Arial', size: 16, bold: true, color: { argb: 'FFFFFFFF' } }
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F766E' } }
+    titleCell.alignment = { vertical: 'middle', horizontal: 'center' }
+    sheetOverview.getRow(1).height = 40
+
+    // Metadata
+    sheetOverview.getCell('A3').value = 'Hệ thống:'
+    sheetOverview.getCell('B3').value = 'Mây An Nhiên · Nền tảng Du lịch & Lưu trú'
+    sheetOverview.getCell('A4').value = 'Ngày xuất báo cáo:'
+    sheetOverview.getCell('B4').value = new Date().toLocaleString('vi-VN')
+    sheetOverview.getCell('A5').value = 'Người xuất:'
+    sheetOverview.getCell('B5').value = req.session.user.email
+    sheetOverview.getCell('A6').value = 'Bộ lọc áp dụng:'
+    sheetOverview.getCell('B6').value = `Từ ngày: ${fromDate || 'Tất cả'} | Đến ngày: ${toDate || 'Hiện tại'} | Dịch vụ: ${serviceType ? (SERVICE_LABELS[serviceType] || serviceType) : 'Tất cả'}`
+
+    for (let r = 3; r <= 6; r++) {
+      sheetOverview.getCell(`A${r}`).font = { name: 'Arial', bold: true, color: { argb: 'FF475569' } }
+      sheetOverview.getCell(`B${r}`).font = { name: 'Arial', color: { argb: 'FF0F172A' } }
+    }
+
+    // Bảng chỉ số KPI tổng hợp
+    sheetOverview.getCell('A8').value = 'CHỈ SỐ TỔNG HỢP'
+    sheetOverview.getCell('B8').value = 'GIÁ TRỊ'
+    sheetOverview.getRow(8).height = 25
+    sheetOverview.getCell('A8').font = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' } }
+    sheetOverview.getCell('B8').font = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' } }
+    sheetOverview.getCell('A8').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } }
+    sheetOverview.getCell('B8').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } }
+
+    const kpis = [
+      ['Tổng số đơn đặt chỗ hợp lệ (không tính đơn hủy)', rows.length, 'number'],
+      ['Tổng số đơn đã thanh toán / xác nhận', confirmedCount, 'number'],
+      ['Tổng doanh thu ghi nhận (VND)', totalRevenue, 'currency'],
+      ['Doanh thu thật đã thanh toán cổng MoMo (VND)', paidRevenue, 'currency'],
+    ]
+
+    kpis.forEach((kpi, idx) => {
+      const rowNum = 9 + idx
+      sheetOverview.getCell(`A${rowNum}`).value = kpi[0]
+      sheetOverview.getCell(`B${rowNum}`).value = kpi[1]
+      sheetOverview.getCell(`A${rowNum}`).font = { name: 'Arial' }
+      sheetOverview.getCell(`B${rowNum}`).font = { name: 'Arial', bold: true }
+      if (kpi[2] === 'currency') {
+        sheetOverview.getCell(`B${rowNum}`).numFmt = '#,##0 "₫"'
+      }
+      sheetOverview.getRow(rowNum).height = 22
+    })
+
+    // Phân bổ theo loại dịch vụ
+    sheetOverview.getCell('A15').value = 'PHÂN BỔ DOANH THU THEO LOẠI DỊCH VỤ'
+    sheetOverview.getCell('A15').font = { name: 'Arial', bold: true, size: 12, color: { argb: 'FF0F766E' } }
+
+    const sHeaderRow = sheetOverview.getRow(16)
+    sHeaderRow.values = ['Mã dịch vụ', 'Tên dịch vụ', 'Số lượng đơn', 'Doanh thu (VND)', 'Tỷ trọng']
+    sHeaderRow.height = 24
+    sHeaderRow.font = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' } }
+    sHeaderRow.eachCell((cell) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } }
+      cell.alignment = { vertical: 'middle', horizontal: 'center' }
+    })
+
+    let sRowNum = 17
+    Object.entries(serviceStats).forEach(([type, stat]) => {
+      const pct = totalRevenue > 0 ? (stat.revenue / totalRevenue) : 0
+      const row = sheetOverview.getRow(sRowNum)
+      row.values = [
+        type,
+        SERVICE_LABELS[type] || type,
+        stat.count,
+        stat.revenue,
+        pct,
+      ]
+      row.font = { name: 'Arial' }
+      sheetOverview.getCell(`D${sRowNum}`).numFmt = '#,##0 "₫"'
+      sheetOverview.getCell(`E${sRowNum}`).numFmt = '0.0%'
+      row.height = 20
+      sRowNum += 1
+    })
+
+    sheetOverview.getColumn(1).width = 45
+    sheetOverview.getColumn(2).width = 30
+    sheetOverview.getColumn(3).width = 16
+    sheetOverview.getColumn(4).width = 22
+    sheetOverview.getColumn(5).width = 14
+
+    // ===== SHEET 2: CHI TIẾT GIAO DỊCH =====
+    const sheetDetails = workbook.addWorksheet('Chi tiết giao dịch', {
+      views: [{ state: 'frozen', ySplit: 1, showGridLines: true }],
+    })
+
+    sheetDetails.columns = [
+      { header: 'Mã đơn', key: 'code', width: 14 },
+      { header: 'Thời gian đặt', key: 'createdAt', width: 20 },
+      { header: 'Họ tên khách hàng', key: 'name', width: 22 },
+      { header: 'Số điện thoại', key: 'phone', width: 15 },
+      { header: 'Email liên hệ', key: 'email', width: 26 },
+      { header: 'Loại dịch vụ', key: 'serviceType', width: 18 },
+      { header: 'Tên dịch vụ / Sản phẩm', key: 'title', width: 34 },
+      { header: 'Khách', key: 'passengers', width: 8 },
+      { header: 'Trạng thái đơn', key: 'status', width: 16 },
+      { header: 'Thanh toán', key: 'paymentStatus', width: 20 },
+      { header: 'Phương thức', key: 'paymentMethod', width: 16 },
+      { header: 'Voucher', key: 'promo', width: 14 },
+      { header: 'Tổng tiền (VND)', key: 'total', width: 18 },
+    ]
+
+    const dHeaderRow = sheetDetails.getRow(1)
+    dHeaderRow.height = 28
+    dHeaderRow.font = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' } }
+    dHeaderRow.eachCell((cell) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } }
+      cell.alignment = { vertical: 'middle', horizontal: 'center' }
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+        bottom: { style: 'medium', color: { argb: 'FF0F172A' } },
+      }
+    })
+
+    rows.forEach((b) => {
+      const row = sheetDetails.addRow({
+        code: b.code,
+        createdAt: b.created_at ? new Date(b.created_at).toLocaleString('vi-VN') : '',
+        name: b.traveler_name,
+        phone: b.traveler_phone,
+        email: b.traveler_email || b.owner_email || b.email,
+        serviceType: SERVICE_LABELS[b.service_type] || b.service_type,
+        title: b.title,
+        passengers: b.passengers,
+        status: b.status,
+        paymentStatus: b.payment_status === 'paid' ? 'Đã thanh toán (MoMo)' : b.payment_status === 'simulated' ? 'Mô phỏng (Demo)' : 'Chưa thanh toán',
+        paymentMethod: b.payment_method || (b.payment_status === 'paid' ? 'momo' : 'manual'),
+        promo: b.promo_code || '—',
+        total: b.total,
+      })
+
+      row.font = { name: 'Arial', size: 10 }
+      row.height = 20
+      const totalCell = row.getCell('total')
+      totalCell.numFmt = '#,##0 "₫"'
+      totalCell.font = { name: 'Arial', size: 10, bold: true }
+    })
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename="MayAnNhien-BaoCaoDoanhThu-${new Date().toISOString().slice(0, 10)}.xlsx"`)
+
+    await workbook.xlsx.write(res)
+    res.end()
+  } catch (err) {
+    console.error('[reports] Xuất báo cáo Excel thất bại:', err)
+    if (!res.headersSent) bad(res, 'Không thể xuất file Excel. Vui lòng thử lại sau.', 500)
+  }
+})
+
 // Lịch sử giao dịch thanh toán của 1 đơn — phục vụ đối soát.
 adminRouter.get('/bookings/:code/payments', (req, res) => {
   const code = String(req.params.code || '')
@@ -783,6 +1025,98 @@ adminRouter.patch('/users/:id', (req, res) => {
     createdAt: cur.created_at,
     bookingCount: db.prepare('SELECT COUNT(*) AS c FROM bookings WHERE user_id = ?').get(cur.id).c,
   })
+})
+
+// Admin thay đổi vai trò người dùng (user | staff | admin)
+adminRouter.patch('/users/:id/role', (req, res) => {
+  const cur = db.prepare('SELECT * FROM users WHERE id = ?').get(Number(req.params.id))
+  if (!cur) return bad(res, 'Không tìm thấy người dùng.', 404)
+  const role = req.body?.role
+  if (!['user', 'staff', 'admin'].includes(role)) {
+    return bad(res, 'Vai trò không hợp lệ (chỉ chấp nhận user, staff, admin).')
+  }
+  if (Number(req.session.user.id) === cur.id && role !== 'admin') {
+    return bad(res, 'Không thể tự hạ quyền quản trị viên của chính mình.', 409)
+  }
+
+  db.prepare(`UPDATE users SET role = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`)
+    .run(role, cur.id)
+
+  writeAuditLog({
+    actorId: req.session.user.id,
+    actorEmail: req.session.user.email,
+    action: 'admin.user.change_role',
+    entityType: 'user',
+    entityId: String(cur.id),
+    detail: `Đổi vai trò người dùng ${cur.email} từ ${cur.role} sang ${role}`,
+    ip: req.ip,
+  })
+
+  ok(res, {
+    id: cur.id,
+    email: cur.email,
+    name: cur.name,
+    role,
+    isActive: !!cur.is_active,
+    createdAt: cur.created_at,
+    bookingCount: db.prepare('SELECT COUNT(*) AS c FROM bookings WHERE user_id = ?').get(cur.id).c,
+  })
+})
+
+/* ---------------------------------------------------- extra-services (Admin) */
+adminRouter.get('/extra-services', (req, res) => {
+  const category = req.query.category ? String(req.query.category).trim() : null
+  const rows = listExtraServices(category)
+  ok(res, rows.map((r) => ({
+    ...r,
+    isActive: !!r.is_active,
+    metadata: typeof r.metadata_json === 'string' ? JSON.parse(r.metadata_json || '{}') : (r.metadata_json || {}),
+  })))
+})
+
+adminRouter.post('/extra-services', (req, res) => {
+  const category = txt(req.body?.category, 30, 2)
+  const name = txt(req.body?.name, 120, 2)
+  const price = int(req.body?.price, 0, 1e9)
+  if (!category || !name || price == null) return bad(res, 'Thiếu thông tin dịch vụ mở rộng (category, name, price).')
+
+  const id = req.body?.id ? String(req.body.id).trim() : newId(category.slice(0, 3))
+  const description = txt(req.body?.description, 500, 0) || ''
+  const metadata = typeof req.body?.metadata === 'object' ? req.body.metadata : {}
+
+  const created = createExtraService({ id, category, name, description, price, metadata })
+  audit(req, 'admin.extra_service.create', 'extra_service', id, `${name} (${price}đ)`)
+  broadcastCatalogUpdated('extra_service', 'created', created)
+  res.status(201).json({ ok: true, data: created })
+})
+
+adminRouter.patch('/extra-services/:id', (req, res) => {
+  const id = String(req.params.id)
+  const cur = getExtraService(id)
+  if (!cur) return bad(res, 'Dịch vụ không tồn tại.', 404)
+
+  const updated = updateExtraService(id, {
+    category: req.body?.category ? txt(req.body.category, 30, 2) : undefined,
+    name: req.body?.name ? txt(req.body.name, 120, 2) : undefined,
+    description: req.body?.description !== undefined ? txt(req.body.description, 500, 0) : undefined,
+    price: req.body?.price !== undefined ? int(req.body.price, 0, 1e9) : undefined,
+    metadata: typeof req.body?.metadata === 'object' ? req.body.metadata : undefined,
+    isActive: req.body?.isActive !== undefined ? bool(req.body.isActive) : undefined,
+  })
+  audit(req, 'admin.extra_service.update', 'extra_service', id, `Updated`)
+  broadcastCatalogUpdated('extra_service', 'updated', updated)
+  ok(res, updated)
+})
+
+adminRouter.delete('/extra-services/:id', (req, res) => {
+  const id = String(req.params.id)
+  const cur = getExtraService(id)
+  if (!cur) return bad(res, 'Dịch vụ không tồn tại.', 404)
+
+  deleteExtraService(id)
+  audit(req, 'admin.extra_service.delete', 'extra_service', id, `Soft deleted`)
+  broadcastCatalogUpdated('extra_service', 'deleted', { id })
+  ok(res, { id, deleted: true })
 })
 
 

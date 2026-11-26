@@ -98,6 +98,16 @@ export const MOMO_CONFIG = {
   allowLive: process.env.MOMO_ALLOW_LIVE === 'true',
 }
 
+/* ------------------------------------------------------------------ SePay (VietQR) */
+export const SEPAY_CONFIG = {
+  apiKey: process.env.SEPAY_API_KEY || '',
+  accNumber: process.env.SEPAY_ACC_NUMBER || '0901234567',
+  bank: process.env.SEPAY_BANK || 'MBBank',
+  accName: process.env.SEPAY_ACC_NAME || 'PHAM MINH KHOI',
+  webhookToken: process.env.SEPAY_WEBHOOK_TOKEN || '',
+  gatewayUrl: process.env.SEPAY_GATEWAY_URL || 'https://my.sepay.vn',
+}
+
 /** Cổng thanh toán có dùng được không (đủ cấu hình + không phải 'disabled'). */
 export const MOMO_ENABLED = MOMO_CONFIG.env !== 'disabled'
   && !!MOMO_CONFIG.partnerCode && !!MOMO_CONFIG.accessKey && !!MOMO_CONFIG.secretKey
