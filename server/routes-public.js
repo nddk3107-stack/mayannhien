@@ -191,9 +191,6 @@ publicRouter.post('/auth/login', loginIpLimit, async (req, res) => {
     if (loginBlocked(key)) return bad(res, 'Đăng nhập sai quá nhiều lần. Vui lòng thử lại sau ít phút.', 429)
     return bad(res, 'Email hoặc mật khẩu không đúng.', 401)
   }
-    recordLoginFail(key)
-    return bad(res, 'Email hoặc mật khẩu không đúng.', 401)
-  }
   if (Number(user.is_active) !== 1) return bad(res, 'Tài khoản đã bị vô hiệu hóa.', 403)
 
   clearLoginFails(key)
