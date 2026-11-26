@@ -1377,17 +1377,70 @@ export function revokeAllUserSessions(userId) {
   }
 }
 
-// Khởi chạy seed bổ sung an toàn (idempotent)
+// Khởi chạy seed 3 tài khoản phân quyền chuẩn (Admin, Staff, Khách hàng) — an toàn & idempotent
 export function seedStaffUser() {
-  const existing = db.prepare('SELECT id, role FROM users WHERE email = ? COLLATE NOCASE').get('staff@mayannhien.vn')
-  if (!existing) {
-    const pwHash = hashPasswordSync('staff-password-123')
-    db.prepare(`
-      INSERT INTO users (email, name, password_hash, role, phone, is_active)
-      VALUES (?, ?, ?, 'staff', '0901234567', 1)
-    `).run('staff@mayannhien.vn', 'Lễ tân Mây An Nhiên', pwHash)
-  } else if (existing.role !== 'staff') {
-    db.prepare("UPDATE users SET role = 'staff' WHERE id = ?").run(existing.id)
+  const defaultAccounts = [
+    {
+      email: 'admin@mayannhien.vn',
+      name: 'Quản trị viên Mây An Nhiên',
+      password: 'Admin@123',
+      role: 'admin',
+      phone: '0901234567',
+      balance: 20_000_000,
+      loyaltyPoints: 350_000,
+      totalSpent: 35_000_000,
+      memberTier: 'Kim Cương',
+    },
+    {
+      email: 'staff@mayannhien.vn',
+      name: 'Lễ tân Mây An Nhiên',
+      password: 'Staff@123',
+      role: 'staff',
+      phone: '0902345678',
+      balance: 5_000_000,
+      loyaltyPoints: 50_000,
+      totalSpent: 5_000_000,
+      memberTier: 'Bạc',
+    },
+    {
+      email: 'user@mayannhien.vn',
+      name: 'Khách hàng Mây An Nhiên',
+      password: 'User@123',
+      role: 'user',
+      phone: '0903456789',
+      balance: 10_000_000,
+      loyaltyPoints: 150_000,
+      totalSpent: 15_000_000,
+      memberTier: 'Vàng',
+    },
+  ]
+
+  for (const acc of defaultAccounts) {
+    const existing = db.prepare('SELECT id, role FROM users WHERE email = ? COLLATE NOCASE').get(acc.email)
+    const pwHash = hashPasswordSync(acc.password)
+    if (!existing) {
+      db.prepare(`
+        INSERT INTO users (email, name, password_hash, role, phone, balance, loyalty_points, total_spent, member_tier, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      `).run(
+        acc.email,
+        acc.name,
+        pwHash,
+        acc.role,
+        acc.phone,
+        acc.balance,
+        acc.loyaltyPoints,
+        acc.totalSpent,
+        acc.memberTier
+      )
+    } else {
+      db.prepare(`
+        UPDATE users
+        SET role = ?, password_hash = ?, is_active = 1,
+            balance = CASE WHEN balance < ? THEN ? ELSE balance END
+        WHERE id = ?
+      `).run(acc.role, pwHash, acc.balance, acc.balance, existing.id)
+    }
   }
 }
 
