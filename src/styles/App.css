@@ -14051,3 +14051,708 @@ html[data-theme="light"] .man-dock-loc {
   align-items: center;
   gap: 8px;
 }
+
+
+/* ==========================================================================
+   MOBILE APP SHELL & NATIVE PWA UX (< 768px) — MÂY AN NHIÊN
+   - Không tràn ngang (overflow-x: hidden), overscroll-behavior-y: contain
+   - Touch target tối thiểu 44x44px, -webkit-tap-highlight-color: transparent
+   - Bottom Navigation 5 Tab cố định ở đáy kèm safe-area-inset-bottom
+   - App Header thu gọn trên Mobile (< 768px): Logo + Tìm nhanh + Sáng/Tối
+   - Banner cài đặt PWA & Bottom Sheet Thông báo đồng bộ Light / Dark Mode
+   ========================================================================== */
+
+html,
+body {
+  overscroll-behavior-y: contain;
+  -webkit-tap-highlight-color: transparent;
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+.app-shell {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+/* Nút tìm kiếm nhanh chỉ hiển thị trên Mobile (< 768px) */
+.mobile-quick-search-btn {
+  display: none;
+}
+
+/* ----------------------------------------------------- PWA INSTALL BANNER */
+.pwa-install-banner {
+  background: linear-gradient(135deg, rgba(1, 148, 243, 0.12), rgba(37, 99, 235, 0.08));
+  border-bottom: 1px solid rgba(1, 148, 243, 0.28);
+  padding: 10px 16px;
+  position: relative;
+  z-index: 40;
+}
+
+[data-theme="dark"] .pwa-install-banner {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.18), rgba(15, 23, 42, 0.92));
+  border-bottom-color: rgba(56, 189, 248, 0.3);
+}
+
+.pwa-install-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pwa-install-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 210px;
+}
+
+.pwa-install-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #0194f3, #0284c7);
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(1, 148, 243, 0.35);
+}
+
+.pwa-install-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pwa-install-copy strong {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-primary, #0f172a);
+  line-height: 1.25;
+}
+
+[data-theme="dark"] .pwa-install-copy strong {
+  color: #f8fafc;
+}
+
+.pwa-install-copy span {
+  font-size: 12px;
+  color: var(--text-secondary, #475569);
+  line-height: 1.3;
+}
+
+[data-theme="dark"] .pwa-install-copy span {
+  color: #cbd5e1;
+}
+
+.pwa-install-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.pwa-install-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: none;
+  background: linear-gradient(135deg, #0194f3, #0284c7);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 3px 10px rgba(1, 148, 243, 0.3);
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+.pwa-install-cta:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.pwa-install-close {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: transparent;
+  color: var(--text-secondary, #475569);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+[data-theme="dark"] .pwa-install-close {
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.28);
+}
+
+.pwa-install-guide {
+  max-width: 1180px;
+  margin: 10px auto 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg-surface, #ffffff);
+  border: 1px solid rgba(1, 148, 243, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-primary, #0f172a);
+}
+
+[data-theme="dark"] .pwa-install-guide {
+  background: #1e293b;
+  color: #f8fafc;
+}
+
+.pwa-guide-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.45;
+}
+
+.pwa-guide-step svg {
+  color: #0194f3;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* ------------------------------------------- MOBILE NOTIFICATION SHEET */
+.mobile-notif-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.65);
+  backdrop-filter: blur(6px);
+  z-index: 110;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.mobile-notif-sheet {
+  width: 100%;
+  max-width: 540px;
+  max-height: 78vh;
+  background: var(--bg-surface, #ffffff);
+  color: var(--text-primary, #0f172a);
+  border-radius: 22px 22px 0 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.25);
+  box-shadow: 0 -14px 40px rgba(2, 6, 23, 0.35);
+  display: flex;
+  flex-direction: column;
+  padding-bottom: calc(74px + env(safe-area-inset-bottom, 0px));
+  animation: mobileSheetSlideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme="dark"] .mobile-notif-sheet {
+  background: #0f172a;
+  color: #f8fafc;
+  border-top-color: #1e293b;
+}
+
+@keyframes mobileSheetSlideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0.5;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.mobile-notif-sheet-handle {
+  width: 42px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.45);
+  margin: 10px auto 4px;
+}
+
+.mobile-notif-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 18px 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.mobile-notif-sheet-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.mobile-notif-sheet-head small {
+  font-size: 12px;
+  color: var(--text-secondary, #64748b);
+}
+
+.mobile-notif-readall-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 40px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(1, 148, 243, 0.35);
+  background: rgba(1, 148, 243, 0.1);
+  color: #0194f3;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mobile-notif-close-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(148, 163, 184, 0.14);
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.mobile-notif-sheet-body {
+  overflow-y: auto;
+  padding: 10px 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mobile-notif-guest,
+.mobile-notif-empty {
+  text-align: center;
+  padding: 32px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-secondary, #64748b);
+}
+
+.mobile-notif-guest h4 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-primary, #0f172a);
+}
+
+[data-theme="dark"] .mobile-notif-guest h4 {
+  color: #f8fafc;
+}
+
+.mobile-notif-guest p,
+.mobile-notif-empty p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.mobile-notif-login-btn {
+  margin-top: 6px;
+  min-height: 44px;
+  padding: 10px 22px;
+  border-radius: 999px;
+  border: none;
+  background: linear-gradient(135deg, #0194f3, #0284c7);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.mobile-notif-row {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(148, 163, 184, 0.06);
+  color: inherit;
+  cursor: pointer;
+}
+
+.mobile-notif-row.unread {
+  background: rgba(1, 148, 243, 0.09);
+  border-color: rgba(1, 148, 243, 0.3);
+}
+
+.mobile-notif-row-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(1, 148, 243, 0.15);
+  color: #0194f3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.mobile-notif-row-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mobile-notif-row-content strong {
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.mobile-notif-row-content span {
+  font-size: 12.5px;
+  opacity: 0.85;
+  line-height: 1.4;
+}
+
+.mobile-notif-row-content small {
+  font-size: 11px;
+  opacity: 0.65;
+}
+
+.mobile-notif-row-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #0194f3;
+  flex-shrink: 0;
+  margin-top: 6px;
+}
+
+/* ------------------------------------------- MOBILE RESPONSIVE (< 768px) */
+@media (max-width: 767px) {
+  /* Khoảng đệm đáy để Bottom Nav không che khuất nút bấm (Checkout / Lưu / Footer) */
+  .app-shell {
+    padding-bottom: calc(82px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* 1. App Header gọn trên Mobile: Logo + Tìm nhanh + Sáng/Tối + Tài khoản */
+  .header-top-inner {
+    padding: 8px 12px !important;
+    gap: 8px !important;
+    flex-wrap: nowrap !important;
+  }
+
+  .tvl-brand .brand-text {
+    font-size: 16px !important;
+    white-space: nowrap;
+  }
+
+  .header-utility-nav {
+    gap: 6px !important;
+    flex-wrap: nowrap !important;
+  }
+
+  /* Ẩn các link chữ dài trên Desktop để Header Mobile gọn chuẩn App */
+  .header-utility-nav > .tvl-util-link,
+  .tvl-auth-logged > .notif-wrapper {
+    display: none !important;
+  }
+
+  /* Hiển thị nút Tìm kiếm nhanh & nút Sáng/Tối chuẩn 44x44px */
+  .mobile-quick-search-btn {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 11px;
+    border-radius: 999px;
+    border: 1px solid rgba(1, 148, 243, 0.35);
+    background: rgba(1, 148, 243, 0.12);
+    color: #0194f3;
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  [data-theme="dark"] .mobile-quick-search-btn {
+    background: rgba(56, 189, 248, 0.16);
+    border-color: rgba(56, 189, 248, 0.38);
+    color: #38bdf8;
+  }
+
+  .mobile-quick-search-label {
+    display: none;
+  }
+
+  @media (min-width: 380px) {
+    .mobile-quick-search-label {
+      display: inline;
+    }
+  }
+
+  .tvl-theme-btn {
+    min-width: 44px !important;
+    min-height: 44px !important;
+    padding: 0 10px !important;
+    justify-content: center;
+  }
+
+  .tvl-theme-btn .theme-toggle-text {
+    display: none !important;
+  }
+
+  .tvl-auth-buttons {
+    gap: 6px !important;
+  }
+
+  .tvl-login-btn,
+  .tvl-register-btn,
+  .account-trigger-btn {
+    min-height: 44px !important;
+    padding: 0 12px !important;
+    font-size: 12.5px !important;
+  }
+
+  .tvl-register-btn {
+    display: none !important;
+  }
+
+  .account-trigger-btn .account-name {
+    max-width: 78px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Thanh dịch vụ ngang cuộn mượt trên cảm ứng */
+  .header-sub-inner {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding: 6px 12px !important;
+    gap: 6px !important;
+    flex-wrap: nowrap !important;
+  }
+
+  .header-sub-inner::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tvl-subnav-link {
+    min-height: 40px !important;
+    padding: 6px 12px !important;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* 2. Thanh Bottom Navigation 5 Tab cố định ở đáy */
+  .mobile-bottom-nav {
+    position: fixed !important;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100 !important;
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+    gap: 2px !important;
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px)) !important;
+    background: rgba(255, 255, 255, 0.94) !important;
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    border-top: 1px solid rgba(226, 232, 240, 0.9) !important;
+    box-shadow: 0 -8px 28px rgba(15, 23, 42, 0.1) !important;
+  }
+
+  [data-theme="dark"] .mobile-bottom-nav {
+    background: rgba(15, 23, 42, 0.94) !important;
+    border-top-color: rgba(51, 65, 85, 0.85) !important;
+    box-shadow: 0 -8px 30px rgba(2, 6, 23, 0.55) !important;
+  }
+
+  .mobile-nav-tab {
+    display: flex !important;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: 50px !important;
+    min-width: 44px !important;
+    padding: 4px 2px !important;
+    border: none !important;
+    border-radius: 12px !important;
+    background: transparent !important;
+    color: #64748b !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    position: relative;
+  }
+
+  [data-theme="dark"] .mobile-nav-tab {
+    color: #94a3b8 !important;
+  }
+
+  .mobile-nav-tab.active {
+    color: #0194f3 !important;
+    background: rgba(1, 148, 243, 0.1) !important;
+    font-weight: 700 !important;
+  }
+
+  [data-theme="dark"] .mobile-nav-tab.active {
+    color: #38bdf8 !important;
+    background: rgba(56, 189, 248, 0.14) !important;
+  }
+
+  .mobile-nav-icon-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 24px;
+  }
+
+  .mobile-nav-icon-wrap.ai-glow {
+    color: #0194f3;
+  }
+
+  [data-theme="dark"] .mobile-nav-icon-wrap.ai-glow {
+    color: #38bdf8;
+  }
+
+  .mobile-nav-badge {
+    position: absolute;
+    top: -4px;
+    right: -7px;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: #ef4444;
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1.5px solid #ffffff;
+  }
+
+  [data-theme="dark"] .mobile-nav-badge {
+    border-color: #0f172a;
+  }
+
+  .mobile-nav-label {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    line-height: 1.15;
+  }
+
+  /* 3. Tối ưu Card dọc cho Đơn đặt chỗ, Lịch sử ví & Nút bấm >= 44x44px */
+  .booking-card {
+    grid-template-columns: 1fr !important;
+    padding: 16px !important;
+    gap: 14px !important;
+  }
+
+  .booking-actions {
+    width: 100%;
+    justify-items: stretch !important;
+    display: flex !important;
+    flex-direction: column;
+    gap: 8px !important;
+  }
+
+  .booking-actions button,
+  .booking-actions .eticket-btn,
+  .booking-actions .sepay-pay-now-btn {
+    width: 100% !important;
+    min-height: 44px !important;
+    justify-content: center !important;
+  }
+
+  .wallet-hero-card {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    padding: 18px !important;
+    gap: 16px !important;
+  }
+
+  .wallet-hero-right {
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+  }
+
+  .wallet-deposit-cta-btn,
+  .wallet-refresh-btn {
+    width: 100% !important;
+    min-height: 44px !important;
+    justify-content: center !important;
+  }
+
+  .wallet-tx-item {
+    flex-wrap: wrap !important;
+    gap: 10px !important;
+    padding: 12px !important;
+  }
+
+  .tx-amount-wrap {
+    width: 100% !important;
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    padding-top: 8px;
+    border-top: 1px dashed rgba(148, 163, 184, 0.25);
+  }
+
+  .profile-tabs-nav {
+    display: flex !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 8px !important;
+    padding-bottom: 4px;
+  }
+
+  .profile-tabs-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .profile-tab-btn {
+    min-height: 44px !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+  }
+
+  /* Đảm bảo Toast nằm phía trên Mobile Bottom Nav */
+  .toast {
+    bottom: calc(84px + env(safe-area-inset-bottom, 0px)) !important;
+    left: 12px !important;
+    right: 12px !important;
+    max-width: calc(100vw - 24px) !important;
+  }
+}

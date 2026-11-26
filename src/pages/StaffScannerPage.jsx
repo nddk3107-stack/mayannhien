@@ -87,29 +87,38 @@ export function StaffScannerPage({ session, onNavigate }) {
         return
       }
       setCameras(devices)
-      const camId = preferredCameraId || devices[devices.length - 1].id
+      const rearDevice = devices.find((d) => /back|rear|environment|sau/i.test(d.label || ''))
+      const camId = preferredCameraId || rearDevice?.id || devices[devices.length - 1].id
       setSelectedCameraId(camId)
 
       const qr = new Html5Qrcode('qr-reader')
       html5QrRef.current = qr
 
-      await qr.start(
-        camId,
-        {
-          fps: 10,
-          qrbox: { width: 240, height: 240 },
-          aspectRatio: 1.0,
-        },
-        (decodedText) => {
-          const now = Date.now()
-          if (lastScannedRef.current.text === decodedText && now - lastScannedRef.current.time < 3500) {
-            return
-          }
-          lastScannedRef.current = { text: decodedText, time: now }
-          handleVerify({ qrData: decodedText })
-        },
-        () => {}
-      )
+      const qrConfig = {
+        fps: 10,
+        qrbox: { width: 240, height: 240 },
+        aspectRatio: 1.0,
+      }
+      const onDecoded = (decodedText) => {
+        const now = Date.now()
+        if (lastScannedRef.current.text === decodedText && now - lastScannedRef.current.time < 3500) {
+          return
+        }
+        lastScannedRef.current = { text: decodedText, time: now }
+        handleVerify({ qrData: decodedText })
+      }
+
+      // Trên điện thoại di động, tự động ưu tiên camera sau (facingMode: "environment")
+      const isMobileDevice = window.innerWidth < 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '')
+      if (!preferredCameraId && isMobileDevice) {
+        try {
+          await qr.start({ facingMode: 'environment' }, qrConfig, onDecoded, () => {})
+        } catch {
+          await qr.start(camId, qrConfig, onDecoded, () => {})
+        }
+      } else {
+        await qr.start(camId, qrConfig, onDecoded, () => {})
+      }
       setCameraActive(true)
     } catch (err) {
       const msg = String(err?.message || err || '')

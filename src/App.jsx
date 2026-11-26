@@ -41,6 +41,8 @@ import { useRealtime } from './realtime/RealtimeContext.jsx'
 // UI Components
 import Navbar from './components/Navbar.jsx'
 import Footer from './components/Footer.jsx'
+import MobileBottomNav from './components/MobileBottomNav.jsx'
+import PwaInstallBanner from './components/PwaInstallBanner.jsx'
 import { LoginModal, RegisterModal } from './components/AuthModals.jsx'
 import FlightBookingMomo from './components/FlightBookingMomo.jsx'
 import SepayModal from './components/SepayModal.jsx'
@@ -643,6 +645,8 @@ export default function App() {
           onNotify={notify}
         />
 
+        <PwaInstallBanner />
+
         {catalogStatus === 'error' && (
           <div className="data-error-banner" role="alert">
             <span><AlertTriangle size={16} strokeWidth={1.8} style={{ verticalAlign: 'middle', marginRight: 6 }} /> Không tải được dữ liệu từ máy chủ. Đang dùng dữ liệu dự phòng.</span>
@@ -937,13 +941,17 @@ export default function App() {
 
         <Footer onNavigate={setPage} />
 
-        <nav className="mobile-bottom-nav">
-          {navItems.map((item) => (
-            <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)}>
-              {item.label}
-            </button>
-          ))}
-        </nav>
+        <MobileBottomNav
+          page={page}
+          setPage={(nextPage) => {
+            if (['flight', 'hotel', 'combo', 'activity', 'car', 'bus', 'train', 'insurance'].includes(nextPage)) {
+              setService(nextPage)
+            }
+            setPage(nextPage)
+          }}
+          session={session}
+          onOpenLogin={() => setLoginOpen(true)}
+        />
       </div>
     </CatalogCtx.Provider>
   )

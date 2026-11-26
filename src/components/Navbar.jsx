@@ -23,6 +23,7 @@ import {
   Settings,
   LogOut,
   Wallet,
+  Search,
 } from 'lucide-react'
 import { apiFetch } from '../services/api.js'
 import { useRealtime } from '../realtime/RealtimeContext.jsx'
@@ -320,6 +321,24 @@ export function Navbar({
     }
   }
 
+  const handleMobileQuickSearch = () => {
+    const focusSearchInput = () => {
+      const searchEl =
+        document.querySelector('.booking-form input[type="text"], .booking-form input:not([type="date"])') ||
+        document.querySelector('.booking-form')
+      if (searchEl) {
+        searchEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        if (typeof searchEl.focus === 'function') searchEl.focus()
+      }
+    }
+    if (page !== 'home') {
+      setPage('home')
+      window.setTimeout(focusSearchInput, 160)
+    } else {
+      focusSearchInput()
+    }
+  }
+
   return (
     <header className={`header tvl-header ${scrolled ? 'scrolled' : ''} ${page === 'home' && !scrolled ? 'on-hero' : ''}`}>
       {/* Tầng 1: Logo + Utility Navigation + Auth */}
@@ -381,6 +400,17 @@ export function Navbar({
             >
               <ReceiptText size={16} strokeWidth={1.8} aria-hidden="true" />
               <span>Đặt chỗ của tôi</span>
+            </button>
+
+            <button
+              type="button"
+              className="mobile-quick-search-btn"
+              onClick={handleMobileQuickSearch}
+              title="Tìm kiếm nhanh chuyến bay & khách sạn"
+              aria-label="Tìm kiếm nhanh"
+            >
+              <Search size={17} strokeWidth={2.1} aria-hidden="true" />
+              <span className="mobile-quick-search-label">Tìm nhanh</span>
             </button>
 
             <button

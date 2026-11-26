@@ -425,14 +425,22 @@ function AdminQrScannerModal({ onClose, onSuccess }) {
       }
       const qr = new Html5Qrcode('admin-qr-reader')
       qrRef.current = qr
-      await qr.start(
-        devices[devices.length - 1].id,
-        { fps: 10, qrbox: { width: 220, height: 220 } },
-        (decodedText) => {
-          verifyTicket({ qrData: decodedText })
-        },
-        () => {}
-      )
+      const qrCfg = { fps: 10, qrbox: { width: 220, height: 220 } }
+      const onDecoded = (decodedText) => {
+        verifyTicket({ qrData: decodedText })
+      }
+      const rearCam = devices.find((d) => /back|rear|environment|sau/i.test(d.label || ''))
+      const fallbackId = rearCam?.id || devices[devices.length - 1].id
+      const isMobile = window.innerWidth < 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '')
+      if (isMobile) {
+        try {
+          await qr.start({ facingMode: 'environment' }, qrCfg, onDecoded, () => {})
+        } catch {
+          await qr.start(fallbackId, qrCfg, onDecoded, () => {})
+        }
+      } else {
+        await qr.start(fallbackId, qrCfg, onDecoded, () => {})
+      }
       setCameraActive(true)
     } catch {
       setCameraError('Không mở được Camera trực tiếp. Vui lòng chọn ảnh mã QR hoặc nhập mã đặt chỗ bên dưới.')
