@@ -3,7 +3,7 @@
 //  - KHÔNG TIN role trong localStorage: mọi dữ liệu đều do /api/admin/* trả về
 //    sau khi server xác thực cookie phiên + role='admin'.
 //  - Giao diện admin KHÔNG trộn vào menu/điều hướng của người dùng.
-import { useEffect, useState, useRef } from 'react'
+import { memo, useEffect, useState, useRef } from 'react'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -705,6 +705,142 @@ const PAYMENT_BADGE_COLORS = {
   refunded: { bg: 'rgba(239, 68, 68, 0.18)', color: '#ef4444', border: 'rgba(239, 68, 68, 0.45)' },
 }
 
+/**
+ * Biểu đồ Doanh thu thực & Số đơn mới theo ngày.
+ * - Tách component + memo: hover chỉ re-render biểu đồ, không re-render toàn Dashboard.
+ * - 1 handler onMouseMove trên vùng vẽ (tính cột theo toạ độ X) -> không nhấp nháy khi
+ *   chuột đi qua khe giữa các cột.
+ * - Tooltip nổi (position: absolute, pointer-events: none) -> KHÔNG đẩy layout, hết giật.
+ */
+const RevenueChart = memo(function RevenueChart({ data }) {
+  const [hoverIdx, setHoverIdx] = useState(-1)
+  const plotRef = useRef(null)
+  const n = data.length
+  const maxRev = Math.max(1, ...data.map((d) => d.net_revenue))
+  const maxOrd = Math.max(1, ...data.map((d) => d.orders_count))
+  const labelStep = n > 15 ? Math.ceil(n / 10) : 1
+
+  const handleMove = (e) => {
+    const el = plotRef.current
+    if (!el || !n) return
+    const rect = el.getBoundingClientRect()
+    const ratio = (e.clientX - rect.left) / rect.width
+    const idx = Math.min(n - 1, Math.max(0, Math.floor(ratio * n)))
+    setHoverIdx((prev) => (prev === idx ? prev : idx))
+  }
+
+  const hovered = hoverIdx >= 0 ? data[hoverIdx] : null
+  const leftPct = hovered ? ((hoverIdx + 0.5) / n) * 100 : 0
+  const tipTranslate = leftPct < 18 ? '0%' : leftPct > 82 ? '-100%' : '-50%'
+  const cols = `repeat(${Math.max(n, 1)}, minmax(0, 1fr))`
+  const colGap = n > 14 ? '3px' : '6px'
+
+  return (
+    <section className="admin-panel" style={{ gridColumn: 'span 2', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
+        <div>
+          <h3 style={{ margin: 0 }}>Biểu đồ Doanh thu thực & Lưu lượng đơn theo ngày</h3>
+          <small style={{ opacity: 0.75 }}>Di chuột vào từng cột để xem chi tiết doanh thu thực nhận và số đơn đặt mới</small>
+        </div>
+        <div style={{ display: 'flex', gap: '12px', fontSize: '0.78rem' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+            <i style={{ width: 10, height: 10, borderRadius: 2, background: '#10b981', display: 'inline-block' }} /> Doanh thu thực
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+            <i style={{ width: 10, height: 10, borderRadius: 2, background: '#3b82f6', display: 'inline-block' }} /> Số đơn mới
+          </span>
+        </div>
+      </div>
+
+      <div
+        ref={plotRef}
+        onMouseMove={handleMove}
+        onMouseLeave={() => setHoverIdx(-1)}
+        style={{
+          position: 'relative',
+          flex: 1,
+          minHeight: '240px',
+          display: 'grid',
+          gridTemplateColumns: cols,
+          gridTemplateRows: '1fr',
+          gap: colGap,
+          padding: '76px 4px 0',
+          borderBottom: '1px solid var(--adm-border)',
+          cursor: 'crosshair',
+          userSelect: 'none',
+        }}
+      >
+        {data.map((d, idx) => {
+          const revPct = d.net_revenue > 0 ? Math.max((d.net_revenue / maxRev) * 100, 6) : 1.5
+          const ordPct = d.orders_count > 0 ? Math.max((d.orders_count / maxOrd) * 100, 8) : 1.5
+          const active = idx === hoverIdx
+          return (
+            <div
+              key={d.date}
+              style={{
+                display: 'flex',
+                alignItems: 'flex-end',
+                justifyContent: 'center',
+                gap: '2px',
+                minWidth: 0,
+                borderRadius: '6px 6px 0 0',
+                background: active ? 'rgba(16, 185, 129, 0.12)' : 'transparent',
+              }}
+            >
+              <span style={{ width: '46%', maxWidth: '16px', height: `${revPct}%`, background: 'linear-gradient(180deg, #10b981, #059669)', borderRadius: '3px 3px 0 0' }} />
+              <span style={{ width: '36%', maxWidth: '12px', height: `${ordPct}%`, background: '#3b82f6', opacity: active ? 1 : 0.85, borderRadius: '3px 3px 0 0' }} />
+            </div>
+          )
+        })}
+
+        {hovered && (
+          <div
+            role="tooltip"
+            style={{
+              position: 'absolute',
+              top: '6px',
+              left: `${leftPct}%`,
+              transform: `translateX(${tipTranslate})`,
+              pointerEvents: 'none',
+              whiteSpace: 'nowrap',
+              zIndex: 2,
+              padding: '6px 10px',
+              borderRadius: '8px',
+              background: 'var(--adm-surface)',
+              border: '1px solid #10b981',
+              boxShadow: 'var(--adm-shadow-md)',
+              fontSize: '0.78rem',
+              lineHeight: 1.4,
+            }}
+          >
+            <div><b>Ngày {hovered.date}</b></div>
+            <div>Doanh thu thực: <b style={{ color: '#10b981' }}>{money(hovered.net_revenue)}</b></div>
+            <div>{hovered.orders_count} đơn mới · {hovered.paid_orders_count} đơn thực thu</div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: cols, gap: colGap, padding: '6px 4px 0' }}>
+        {data.map((d, idx) => (
+          <small
+            key={d.date}
+            style={{
+              fontSize: n > 15 ? '0.62rem' : '0.68rem',
+              textAlign: 'center',
+              whiteSpace: 'nowrap',
+              overflow: 'visible',
+              opacity: idx === hoverIdx ? 1 : (idx % labelStep === 0 ? 0.8 : 0),
+              fontWeight: idx === hoverIdx ? 700 : 400,
+            }}
+          >
+            {d.label}
+          </small>
+        ))}
+      </div>
+    </section>
+  )
+})
+
 function DashboardSection({ call, onGoto }) {
   const [range, setRange] = useState('30d')
   const [overview, setOverview] = useState(null)
@@ -712,7 +848,6 @@ function DashboardSection({ call, onGoto }) {
   const [showExportModal, setShowExportModal] = useState(false)
   const [showQrModal, setShowQrModal] = useState(false)
   const [detailBooking, setDetailBooking] = useState(null)
-  const [hoveredBar, setHoveredBar] = useState(null)
   const { lastTelemetry, status: wsStatus, subscribe } = useRealtime()
 
   const load = async (targetRange = range) => {
@@ -748,8 +883,6 @@ function DashboardSection({ call, onGoto }) {
 
   const { financial, ops, charts, system_health } = overview
   const revChart = charts?.revenue_chart || []
-  const maxRev = Math.max(1, ...revChart.map((d) => d.net_revenue))
-  const maxOrd = Math.max(1, ...revChart.map((d) => d.orders_count))
   const isLive = wsStatus === 'connected'
 
   return (
@@ -974,111 +1107,8 @@ function DashboardSection({ call, onGoto }) {
 
       {/* 4. HÀNG 3 — BIỂU ĐỒ PHÂN TÍCH (2 CỘT TỶ LỆ 8 / 4) */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.25rem' }}>
-        {/* Cột trái: Biểu đồ kết hợp Doanh thu thực & Số đơn mới theo ngày (có Tooltip) */}
-        <section className="admin-panel" style={{ gridColumn: 'span 2', minWidth: 0, overflow: 'hidden' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
-            <div>
-              <h3 style={{ margin: 0 }}>Biểu đồ Doanh thu thực & Lưu lượng đơn theo ngày</h3>
-              <small style={{ opacity: 0.75 }}>Di chuột vào từng cột để xem chi tiết doanh thu thực nhận và số đơn đặt mới</small>
-            </div>
-            {hoveredBar ? (
-              <div
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: '8px',
-                  background: 'var(--adm-bg)',
-                  border: '1px solid #10b981',
-                  fontSize: '0.8rem',
-                }}
-              >
-                <b>Ngày {hoveredBar.date}:</b> Doanh thu thực <b style={{ color: '#10b981' }}>{money(hoveredBar.net_revenue)}</b> · {hoveredBar.orders_count} đơn ({hoveredBar.paid_orders_count} đơn thực thu)
-              </div>
-            ) : (
-              <div style={{ display: 'flex', gap: '12px', fontSize: '0.78rem' }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-                  <i style={{ width: 10, height: 10, borderRadius: 2, background: '#10b981', display: 'inline-block' }} /> Doanh thu thực
-                </span>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-                  <i style={{ width: 10, height: 10, borderRadius: 2, background: '#3b82f6', display: 'inline-block' }} /> Số đơn mới
-                </span>
-              </div>
-            )}
-          </div>
-
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: `repeat(${Math.max(revChart.length, 1)}, minmax(0, 1fr))`,
-              gap: revChart.length > 14 ? '3px' : '6px',
-              alignItems: 'end',
-              height: '200px',
-              padding: '16px 4px 8px',
-              borderBottom: '1px solid var(--adm-border)',
-            }}
-          >
-            {revChart.map((d, idx) => {
-              const revPct = d.net_revenue > 0 ? Math.max(Math.round((d.net_revenue / maxRev) * 100), 8) : 2
-              const ordPct = d.orders_count > 0 ? Math.max(Math.round((d.orders_count / maxOrd) * 100), 10) : 2
-              const isHover = hoveredBar?.date === d.date
-              const showLabel = revChart.length <= 15 || idx % 2 === 0 || idx === revChart.length - 1
-              return (
-                <div
-                  key={d.date}
-                  onMouseEnter={() => setHoveredBar(d)}
-                  onMouseLeave={() => setHoveredBar(null)}
-                  title={`${d.date}\nDoanh thu thực: ${money(d.net_revenue)}\nSố đơn: ${d.orders_count}`}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    height: '100%',
-                    minWidth: 0,
-                    justifyContent: 'flex-end',
-                    cursor: 'pointer',
-                    background: isHover ? 'rgba(16, 185, 129, 0.12)' : 'transparent',
-                    borderRadius: '6px',
-                    padding: '2px 1px',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', width: '100%', height: '145px', justifyContent: 'center' }}>
-                    <span
-                      style={{
-                        width: '46%',
-                        maxWidth: '16px',
-                        height: `${revPct}%`,
-                        background: 'linear-gradient(180deg, #10b981, #059669)',
-                        borderRadius: '3px 3px 0 0',
-                        transition: 'height 0.2s',
-                      }}
-                    />
-                    <span
-                      style={{
-                        width: '36%',
-                        maxWidth: '12px',
-                        height: `${ordPct}%`,
-                        background: '#3b82f6',
-                        opacity: 0.85,
-                        borderRadius: '3px 3px 0 0',
-                        transition: 'height 0.2s',
-                      }}
-                    />
-                  </div>
-                  <small
-                    style={{
-                      fontSize: revChart.length > 15 ? '0.62rem' : '0.68rem',
-                      marginTop: '6px',
-                      opacity: showLabel ? 0.85 : 0,
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    {d.label}
-                  </small>
-                </div>
-              )
-            })}
-          </div>
-        </section>
+        {/* Cột trái: Biểu đồ Doanh thu thực & Số đơn mới (component riêng, hover không gây giật) */}
+        <RevenueChart data={revChart} />
 
         {/* Cột phải: Phân bổ doanh thu theo dịch vụ & Trạng thái đơn */}
         <section className="admin-panel" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
